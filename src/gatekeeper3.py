@@ -85,6 +85,78 @@ class Gatekeeper3:
             logger.warning(f"Could not initialize Google Sheets client: {e}")
         return None
 
+    def _download_voice_files_from_gdrive(self, row_id: int = 2, target_dir: str = "artifacts/voice_row_2") -> bool:
+        """
+        Downloads all 12 WAV files from the Google Drive voice folder into target_dir.
+        Uses service account credentials from env or SA_PATHS.
+        """
+        try:
+            import requests
+            from google.oauth2.service_account import Credentials
+            import google.auth.transport.requests
+
+            sa_info = None
+            env_sa = os.environ.get("GCP_SERVICE_ACCOUNT_JSON") or os.environ.get("GOOGLE_SA_JSON")
+            if env_sa:
+                try:
+                    sa_info = json.loads(env_sa)
+                except Exception as e:
+                    logger.warning(f"Failed to parse SA from env: {e}")
+
+            if not sa_info:
+                for p in SA_PATHS:
+                    if os.path.exists(p):
+                        try:
+                            with open(p, "r", encoding="utf-8") as f:
+                                sa_info = json.load(f)
+                            break
+                        except Exception:
+                            pass
+
+            if not sa_info:
+                logger.warning("No Google Service Account credentials available for Drive download.")
+                return False
+
+            scopes = ["https://www.googleapis.com/auth/drive.readonly"]
+            creds = Credentials.from_service_account_info(sa_info, scopes=scopes)
+            creds.refresh(google.auth.transport.requests.Request())
+            headers = {"Authorization": f"Bearer {creds.token}"}
+
+            voice_folder_id = "1AgtKSIhgRDW4NfMJi5I1X1l2sXYgFh1e"
+            url = f"https://www.googleapis.com/drive/v3/files?q='{voice_folder_id}'+in+parents+and+trashed=false&fields=files(id,name,size)"
+            resp = requests.get(url, headers=headers, timeout=30)
+            if resp.status_code != 200:
+                logger.error(f"Google Drive folder listing failed: {resp.status_code} {resp.text}")
+                return False
+
+            files = resp.json().get("files", [])
+            logger.info(f"📥 Found {len(files)} files in Google Drive voice folder {voice_folder_id}. Syncing to {target_dir}...")
+            os.makedirs(target_dir, exist_ok=True)
+
+            for item in files:
+                fname = item.get("name")
+                fid = item.get("id")
+                if not fname or not fid:
+                    continue
+                dest = os.path.join(target_dir, fname)
+                if os.path.exists(dest):
+                    expected_sz = int(item.get("size", 0))
+                    if os.path.getsize(dest) == expected_sz:
+                        continue
+                logger.info(f"  ⬇️ Downloading {fname} ({item.get('size')} bytes)...")
+                media_url = f"https://www.googleapis.com/drive/v3/files/{fid}?alt=media"
+                with requests.get(media_url, headers=headers, stream=True, timeout=60) as dl_resp:
+                    dl_resp.raise_for_status()
+                    with open(dest, "wb") as f_out:
+                        for chunk in dl_resp.iter_content(chunk_size=65536):
+                            if chunk:
+                                f_out.write(chunk)
+            logger.info(f"✓ All files synced from Google Drive into {target_dir}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed downloading from Google Drive: {e}")
+            return False
+
     def sync_google_sheet(
         self,
         row_id: int = 2,
@@ -145,13 +217,22 @@ class Gatekeeper3:
         ])
 
         active_dir = None
-        for d in search_dirs:
-            if os.path.isdir(d):
-                active_dir = d
-                break
+        if voice_dir:
+            active_dir = voice_dir
+        else:
+            for d in search_dirs:
+                if os.path.isdir(d):
+                    # Check if all 12 files are present in this directory
+                    if all(os.path.exists(os.path.join(d, fn)) for _, fn, _ in STORY_AUDIO_SPEC):
+                        active_dir = d
+                        break
 
-        if not active_dir:
-            active_dir = search_dirs[0]
+            # If not found or incomplete, download to search_dirs[0] (artifacts/voice_row_{row_id})
+            if not active_dir:
+                active_dir = search_dirs[0]
+                os.makedirs(active_dir, exist_ok=True)
+                logger.info(f"Voice assets not found locally. Downloading from Google Drive into {active_dir}...")
+                self._download_voice_files_from_gdrive(row_id=row_id, target_dir=active_dir)
 
         logger.info(f"🛡️ Gatekeeper 3 Auditing Row #{row_id} in directory: {active_dir}")
 
@@ -230,6 +311,14 @@ class Gatekeeper3:
 
             audit_report["files_audited"][filename] = file_report
 
+            if valid_wav and valid_dur and file_report.get("provenance_qc", False):
+                rms_val = wav_meta.get("rms", 0.0)
+                logger.info(
+                    f"  ✓ {filename:14s} | Rate: {wav_meta.get('sample_rate')}Hz | Ch: {wav_meta.get('channels')} | "
+                    f"Bits: {wav_meta.get('sample_width', 0)*8} | RMS: {rms_val:6.1f} >= 500 | "
+                    f"Duration: {dur:5.2f}s [{t_min:4.2f}s - {t_max:5.2f}s] | Provenance: OmniVoice PASS"
+                )
+
         audit_report["failed_sections"] = sorted(list(failed_sections))
         audit_report["passed"] = all_valid
 
@@ -244,7 +333,7 @@ class Gatekeeper3:
                     audit_report["self_healed"][f_sec] = {"workflow": wf_name, "dispatched": ok, "message": msg}
 
         if all_valid:
-            summary = f"GK3 PASS: All 12 audio files verified for Row #{row_id} (24kHz mono 16-bit, RMS >= 500, duration valid)"
+            summary = f"GK3 PASS: All 12 audio files verified for Row #{row_id} (24kHz mono 16-bit, RMS >= 500, duration valid, OmniVoice provenance)"
             logger.info(summary)
             if sync_sheet:
                 self.sync_google_sheet(row_id=row_id)
@@ -316,11 +405,14 @@ def main():
         print(f"Gatekeeper 3 validation result: {reason}")
         sys.exit(0 if passed else 1)
 
+    should_sync = args.upload or bool(os.environ.get("GITHUB_ACTIONS"))
+    should_heal = args.self_heal or bool(os.environ.get("GITHUB_ACTIONS"))
+
     passed, reason, report = gk3.audit_row(
         row_id=args.row_id,
         voice_dir=args.voice_dir,
-        self_heal=args.self_heal,
-        sync_sheet=args.upload
+        self_heal=should_heal,
+        sync_sheet=should_sync
     )
 
     if args.output:
@@ -328,7 +420,7 @@ def main():
             json.dump(report, f, ensure_ascii=False, indent=2)
 
     verdict_str = "PASS" if passed else "FAIL"
-    separator = "=" * 50
+    separator = "=" * 80
     print(f"\n{separator}\nGatekeeper 3 Audit Verdict: {verdict_str}\nSummary: {reason}\n{separator}")
     sys.exit(0 if passed else 1)
 

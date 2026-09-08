@@ -32,4 +32,4 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.PIPELINE_PAT }}
         run: |
           echo "🛡️ Gatekeeper 3 Auditing Audio Files for Row #${{ github.event.inputs.row_id }}..."
-          python src/gatekeeper3.py --row-id "${{ github.event.inputs.row_id }}"
+          python src/gatekeeper3.py --row-id "${{ github.event.inputs.row_id }}" --upload --self-heal
