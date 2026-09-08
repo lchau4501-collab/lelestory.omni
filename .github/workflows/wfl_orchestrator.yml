@@ -1,6 +1,6 @@
 name: OmniVoice TTS - Orchestrator (7 Parallel Sub-Workflows)
 
-on:
+'on':
   workflow_dispatch:
     inputs:
       row_id:
@@ -22,7 +22,7 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Cache OmniVoice (k2-fsa) Models
+      - name: Cache OmniVoice (k2-fsa) Models & Voice Samples
         uses: actions/cache@v4
         with:
           path: |
@@ -32,8 +32,23 @@ jobs:
           restore-keys: |
             omnivoice-k2fsa-model-
 
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests gspread google-auth
+
+      - name: Seed / Verify Pinned Reference Voice Sample in Cache
+        env:
+          GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_SA_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+        run: |
+          echo "🔊 Ensuring OmniVoice reference voice sample is pinned in ~/.cache/omnivoice/voice_samples/reference.wav..."
+          python -c "import sys; sys.path.insert(0, 'src'); from cache_manager import ModelCacheManager; mgr = ModelCacheManager(); mgr.ensure_models_cached(); p = mgr.ensure_voice_sample_cached(); print(f'Pinned sample verified at: {p}')"
+
       - name: Launch 7 Parallel Story Sub-Workflows
         env:
+          GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_SA_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
           GITHUB_TOKEN: ${{ secrets.PIPELINE_PAT }}
         run: |
           TARGET_ROW="${{ github.event.inputs.row_id || github.event.client_payload.batch_id || '2' }}"

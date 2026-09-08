@@ -2,3 +2,7 @@
 docs/
 *.zip
 .env
+__pycache__/
+*.py[cod]
+artifacts/
+.pytest_cache/
