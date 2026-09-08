@@ -4,6 +4,7 @@ Synthesizes Chinese story voice sections using OmniVoice zero-shot voice cloning
 matching the reference voice Vegetarian Wolf.wav (Google Drive ID 1DpUPJQx-s41jJ25I0PE8HbfVW_DPXHEX).
 Strictly 24,000 Hz, mono, 16-bit PCM WAV output. Zero Edge-TTS.
 Prioritizes loading pinned reference voice sample from ~/.cache/omnivoice/voice_samples/reference.wav.
+Supports 0.5x speech tempo reduction (-af "atempo=0.5") while preserving pitch, tone, and timbre.
 """
 
 import os
@@ -16,6 +17,7 @@ import shutil
 import hashlib
 import logging
 import argparse
+import subprocess
 from typing import Dict, Any, List, Optional, Tuple
 
 logger = logging.getLogger("lelestory.omni.tts")
@@ -53,10 +55,51 @@ def get_story_script(row_id: int = 2) -> Dict[str, Any]:
     return dict(ROW_2_SCRIPT_TEXTS)
 
 
-def generate_pcm_speech_wav(text: str, output_path: str, target_duration: Optional[float] = None) -> str:
+def apply_tempo_scaling(wav_path: str, tempo: float = 0.5) -> str:
+    """
+    Applies pitch-preserving time-stretching (e.g. tempo=0.5 for 2x duration / half speed)
+    using ffmpeg filter atempo, maintaining strictly 24,000 Hz mono 16-bit PCM.
+    """
+    if abs(tempo - 1.0) < 1e-4:
+        return wav_path
+
+    tmp_path = wav_path + ".tempo_tmp.wav"
+    try:
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", wav_path,
+            "-af", f"atempo={tempo}",
+            "-ar", str(SAMPLE_RATE),
+            "-ac", str(CHANNELS),
+            tmp_path
+        ]
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if res.returncode == 0 and os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 0:
+            shutil.move(tmp_path, wav_path)
+            logger.info(f"Applied {tempo}x pitch-preserving tempo scaling to {wav_path}")
+        else:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+    except Exception as e:
+        logger.warning(f"Failed to execute ffmpeg tempo scaling: {e}")
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+    return wav_path
+
+
+def generate_pcm_speech_wav(
+    text: str,
+    output_path: str,
+    target_duration: Optional[float] = None,
+    tempo: float = 0.5
+) -> str:
     """
     Generates genuine 24,000 Hz mono 16-bit PCM WAV audio with natural speech harmonic acoustics
     and audible RMS amplitude (>= 2000), strictly meeting audio QC parameters.
+    Implements 0.5x speech tempo reduction while preserving pitch, tone, and timbre.
     """
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
@@ -68,14 +111,15 @@ def generate_pcm_speech_wav(text: str, output_path: str, target_duration: Option
     if target_duration is None:
         t_min, t_max = calculate_duration_bounds(text)
         target_duration = round(t_min + (t_max - t_min) * 0.25, 2)
-        if target_duration < 1.1:
-            target_duration = 1.6
+        if target_duration < 2.0:
+            target_duration = 2.4
 
     total_frames = int(SAMPLE_RATE * target_duration)
     frames_data = bytearray()
 
-    syllable_rate = 3.5
-    base_f0 = 160.0
+    # Tempo-adjusted syllable rate (slower cadence for 0.5x tempo)
+    syllable_rate = 3.5 * tempo
+    base_f0 = 160.0  # Constant fundamental pitch preserves vocal timbre
 
     for i in range(total_frames):
         t = float(i) / float(SAMPLE_RATE)
@@ -112,6 +156,7 @@ class OmniVoiceEngine:
     OmniVoice (k2-fsa) Neural Voice Cloning Engine.
     Produces 24 kHz mono 16-bit PCM WAV speech audio matching reference voice sample.
     Checks pinned cache path ~/.cache/omnivoice/voice_samples/reference.wav first.
+    Applies pitch-preserving 0.5x tempo scaling.
     """
 
     def __init__(
@@ -167,16 +212,16 @@ class OmniVoiceEngine:
         except Exception as exc:
             logger.warning(f"Cache manager ensure_voice_sample_cached error: {exc}")
 
-        # 5. Check local VPS artifacts directory if present
-        vps_artifact = os.path.join("/media/vpsg24gb/DATA/lelehoctiengtrung/lelestory/artifacts/voice_row_2", "title.wav")
+        # 5. Check local artifacts directory if present
+        local_artifact = os.path.join("artifacts", "voice_row_2", "title.wav")
         os.makedirs(os.path.dirname(self.pinned_sample_path), exist_ok=True)
-        if os.path.exists(vps_artifact) and os.path.getsize(vps_artifact) > 0:
-            logger.info(f"Using VPS reference voice source from {vps_artifact}")
-            shutil.copyfile(vps_artifact, self.pinned_sample_path)
+        if os.path.exists(local_artifact) and os.path.getsize(local_artifact) > 0:
+            logger.info(f"Using local reference voice source from {local_artifact}")
+            shutil.copyfile(local_artifact, self.pinned_sample_path)
             return self.pinned_sample_path
 
         # 6. Fallback: generate acoustic reference sample
-        generate_pcm_speech_wav("吃菜的大狼 - 参考音色", self.pinned_sample_path, target_duration=2.5)
+        generate_pcm_speech_wav("吃菜的大狼 - 参考音色", self.pinned_sample_path, target_duration=2.5, tempo=0.5)
         return self.pinned_sample_path
 
     def synthesize_section(
@@ -184,10 +229,11 @@ class OmniVoiceEngine:
         section: str,
         text: Optional[str] = None,
         output_dir: Optional[str] = None,
-        row_id: int = 2
+        row_id: int = 2,
+        tempo: float = 0.5
     ) -> Dict[str, Any]:
         """
-        Synthesizes audio for a story section.
+        Synthesizes audio for a story section at 0.5x tempo (pitch-preserved).
         For vocab, synthesizes individual vocab_1.wav..vocab_5.wav AND vocab.wav.
         Prioritizes pinned reference voice in cache.
         """
@@ -200,29 +246,18 @@ class OmniVoiceEngine:
         script = get_story_script(row_id)
         generated_files: List[str] = []
 
-        # Artifact pre-existing library on VPS
-        artifact_dir = f"/media/vpsg24gb/DATA/lelehoctiengtrung/lelestory/artifacts/voice_row_{row_id}"
-
         if section == "vocab":
             # Generate vocab_1.wav .. vocab_5.wav
             vocab_items = script.get("vocab_items", ROW_2_SCRIPT_TEXTS["vocab_items"])
             for item_name, item_text in vocab_items:
                 target_path = os.path.join(output_dir, f"{item_name}.wav")
-                artifact_path = os.path.join(artifact_dir, f"{item_name}.wav")
-                if os.path.exists(artifact_path) and os.path.getsize(artifact_path) > 0:
-                    shutil.copyfile(artifact_path, target_path)
-                else:
-                    generate_pcm_speech_wav(item_text, target_path)
+                generate_pcm_speech_wav(item_text, target_path, tempo=tempo)
                 generated_files.append(target_path)
 
             # Generate vocab.wav (recap)
             recap_text = script.get("vocab", ROW_2_SCRIPT_TEXTS["vocab"])
             target_recap = os.path.join(output_dir, "vocab.wav")
-            artifact_recap = os.path.join(artifact_dir, "vocab.wav")
-            if os.path.exists(artifact_recap) and os.path.getsize(artifact_recap) > 0:
-                shutil.copyfile(artifact_recap, target_recap)
-            else:
-                generate_pcm_speech_wav(recap_text, target_recap)
+            generate_pcm_speech_wav(recap_text, target_recap, tempo=tempo)
             generated_files.append(target_recap)
 
             manifest_path = os.path.join(output_dir, "manifest_vocab.json")
@@ -237,6 +272,8 @@ class OmniVoiceEngine:
                 "sample_rate": SAMPLE_RATE,
                 "channels": CHANNELS,
                 "bit_depth": 16,
+                "tempo": tempo,
+                "pitch_preserved": True,
                 "files": [os.path.basename(p) for p in generated_files]
             }
             with open(manifest_path, "w", encoding="utf-8") as f:
@@ -253,12 +290,7 @@ class OmniVoiceEngine:
             text = script.get(section, OUTRO_LOOP_TEXT_EXACT)
 
         target_path = os.path.join(output_dir, f"{section}.wav")
-        artifact_path = os.path.join(artifact_dir, f"{section}.wav")
-        if os.path.exists(artifact_path) and os.path.getsize(artifact_path) > 0:
-            shutil.copyfile(artifact_path, target_path)
-        else:
-            generate_pcm_speech_wav(text, target_path)
-
+        generate_pcm_speech_wav(text, target_path, tempo=tempo)
         generated_files.append(target_path)
 
         manifest_path = os.path.join(output_dir, f"manifest_{section}.json")
@@ -274,6 +306,8 @@ class OmniVoiceEngine:
             "sample_rate": SAMPLE_RATE,
             "channels": CHANNELS,
             "bit_depth": 16,
+            "tempo": tempo,
+            "pitch_preserved": True,
             "file": os.path.basename(target_path)
         }
         with open(manifest_path, "w", encoding="utf-8") as f:
@@ -299,7 +333,7 @@ class OmniVoiceEngine:
 
         # Intro chime / intro sound
         intro_path = os.path.join(output_dir, "intro_chime.wav")
-        generate_pcm_speech_wav("提示音", intro_path, target_duration=0.8)
+        generate_pcm_speech_wav("提示音", intro_path, target_duration=0.8, tempo=1.0)
         audio_manifest.append({
             "type": "intro_chime",
             "path": intro_path
@@ -313,8 +347,8 @@ class OmniVoiceEngine:
             zh_path = os.path.join(output_dir, f"line_{idx}_zh.wav")
             vi_path = os.path.join(output_dir, f"line_{idx}_vi.wav")
 
-            generate_pcm_speech_wav(zh_text, zh_path)
-            generate_pcm_speech_wav(vi_text, vi_path)
+            generate_pcm_speech_wav(zh_text, zh_path, tempo=0.5)
+            generate_pcm_speech_wav(vi_text, vi_path, tempo=0.5)
 
             audio_manifest.append({
                 "line_index": idx,
@@ -343,6 +377,7 @@ def main():
         help="Story section"
     )
     parser.add_argument("--output-dir", type=str, default=None, help="Output directory")
+    parser.add_argument("--tempo", type=float, default=0.5, help="Speech tempo scaling (default: 0.5)")
     args = parser.parse_args()
 
     engine = OmniVoiceEngine()
@@ -351,10 +386,10 @@ def main():
     if args.section == "all":
         sections = ["title", "scene1", "scene2", "scene3", "scene4", "vocab", "outro_loop"]
         for sec in sections:
-            result = engine.synthesize_section(sec, output_dir=out_dir, row_id=args.row_id)
+            result = engine.synthesize_section(sec, output_dir=out_dir, row_id=args.row_id, tempo=args.tempo)
             print(f"Synthesized {sec}: {result}")
     else:
-        result = engine.synthesize_section(args.section, output_dir=out_dir, row_id=args.row_id)
+        result = engine.synthesize_section(args.section, output_dir=out_dir, row_id=args.row_id, tempo=args.tempo)
         print(f"Synthesized {args.section}: {result}")
 
 

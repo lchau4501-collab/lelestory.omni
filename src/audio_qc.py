@@ -1,7 +1,8 @@
 """
 Audio Quality Control (QC) Module for LeLe Storybook Video Engine.
 Validates 24,000 Hz mono 16-bit PCM WAV audio, RMS amplitude >= 500,
-and Chinese character duration bounding.
+peak digital clipping detection, and Chinese character duration bounding
+calibrated for 0.5x speech tempo (~2x duration).
 """
 
 import os
@@ -20,6 +21,7 @@ DEFAULT_CHANNELS = 1          # mono
 DEFAULT_BIT_DEPTH = 16        # 16-bit PCM (sampwidth = 2)
 DEFAULT_MIN_RMS = 500.0       # Minimum RMS amplitude to reject silence
 DEFAULT_MIN_DURATION = 0.5    # Minimum absolute seconds
+DEFAULT_MAX_CLIPPING_RATIO = 0.01  # Maximum 1% digital clipping threshold
 
 # Punctuation to strip when calculating character count N
 PUNCTUATION_REGEX = re.compile(r"[\s\.,\/#!$%\^&\*;:{}=\-_`~()，。！？……、《》“”‘’；：—·]+")
@@ -34,24 +36,25 @@ def strip_punctuation(text: str) -> str:
 
 def calculate_duration_bounds(text: str) -> Tuple[float, float]:
     """
-    Calculates dynamic Chinese speech duration bounds [T_min, T_max] based on character count N.
+    Calculates dynamic Chinese speech duration bounds [T_min, T_max] based on character count N,
+    calibrated for 0.5x speech tempo (~2x duration, pitch-preserved).
     
-    Formula:
+    Formula for 0.5x tempo:
       N = non-punctuation character count
-      If N <= 3: T in [1.0s, 4.0s]
+      If N <= 3: T in [2.0s, 8.0s]
       If N > 3:
-        T_min = max(1.2s, N * 0.15s)
-        T_max = max(3.0s, N * 0.85s + 2.0s)
+        T_min = max(2.0s, round(N * 0.20 + 1.5, 2))
+        T_max = max(6.0s, round(N * 1.40 + 4.0, 2))
     """
     stripped = strip_punctuation(text)
     n = len(stripped)
 
     if n <= 3:
-        t_min = 1.0
-        t_max = 4.0
+        t_min = 2.0
+        t_max = 8.0
     else:
-        t_min = max(1.2, n * 0.15)
-        t_max = max(3.0, n * 0.85 + 2.0)
+        t_min = max(2.0, round(n * 0.20 + 1.5, 2))
+        t_max = max(6.0, round(n * 1.40 + 4.0, 2))
 
     return round(t_min, 2), round(t_max, 2)
 
@@ -99,7 +102,8 @@ def check_wav_file(
     min_duration: float = DEFAULT_MIN_DURATION,
     expected_sample_rate: int = DEFAULT_SAMPLE_RATE,
     expected_channels: int = DEFAULT_CHANNELS,
-    min_rms: float = DEFAULT_MIN_RMS
+    min_rms: float = DEFAULT_MIN_RMS,
+    max_clipping_ratio: float = DEFAULT_MAX_CLIPPING_RATIO
 ) -> Tuple[bool, str, Dict[str, Any]]:
     """
     Validates PCM WAV audio file properties against strict acoustic quality criteria.
@@ -109,6 +113,7 @@ def check_wav_file(
     - file size > 0
     - duration >= min_duration
     - RMS amplitude >= min_rms (silence threshold >= 500)
+    - digital clipping <= max_clipping_ratio (peak digital clipping check)
     
     Returns:
       (is_valid: bool, reason: str, metadata: dict)
@@ -123,6 +128,9 @@ def check_wav_file(
         "bit_depth": 0,
         "duration": 0.0,
         "rms": 0.0,
+        "peak": 0,
+        "clipped_samples": 0,
+        "clipping_ratio": 0.0,
         "is_valid": False,
     }
 
@@ -191,6 +199,21 @@ def check_wav_file(
                 logger.error(msg)
                 return False, msg, info
 
+            # Check 6: Peak Digital Clipping Detection (clipping_ratio <= max_clipping_ratio)
+            if sampwidth == 2 and frames > 0:
+                samples = struct.unpack(f"<{frames * channels}h", raw_frames)
+                peak = max(abs(s) for s in samples) if samples else 0
+                clipped_count = sum(1 for s in samples if abs(s) >= 32767)
+                clipping_ratio = clipped_count / float(len(samples)) if samples else 0.0
+                info["peak"] = peak
+                info["clipped_samples"] = clipped_count
+                info["clipping_ratio"] = round(clipping_ratio, 4)
+
+                if clipping_ratio > max_clipping_ratio:
+                    msg = f"Severe digital clipping detected ({clipped_count} samples, {clipping_ratio*100:.2f}% > {max_clipping_ratio*100:.1f}%): {filepath}"
+                    logger.error(msg)
+                    return False, msg, info
+
             info["is_valid"] = True
             msg = f"Valid WAV: {duration:.2f}s, {sample_rate}Hz, {channels}ch, 16-bit, RMS={rms:.1f}"
             logger.info(f"{filepath} -> {msg}")
@@ -205,6 +228,6 @@ def check_wav_file(
 if __name__ == "__main__":
     import sys
     logging.basicConfig(level=logging.INFO)
-    target = sys.argv[1] if len(sys.argv) > 1 else "/media/vpsg24gb/DATA/lelehoctiengtrung/lelestory/artifacts/voice_row_2/title.wav"
+    target = sys.argv[1] if len(sys.argv) > 1 else "artifacts/voice_row_2/title.wav"
     valid, reason, meta = check_wav_file(target)
     print(f"File: {target}\nValid: {valid}\nReason: {reason}\nMetadata: {meta}")

@@ -50,3 +50,30 @@ jobs:
         run: |
           echo "🎙️ Synthesizing OmniVoice section 'scene2' for Row #${{ github.event.inputs.row_id }}..."
           python src/omni_tts.py --row-id "${{ github.event.inputs.row_id }}" --section "scene2"
+
+      - name: Install rclone
+        run: |
+          if ! command -v rclone &> /dev/null; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq rclone
+          fi
+          rclone version
+
+      - name: Upload Audio to Google Drive (Voice Folder)
+        env:
+          RCLONE_CONFIG_GDRIVE_TYPE: drive
+          RCLONE_CONFIG_GDRIVE_SCOPE: drive
+          RCLONE_CONFIG_GDRIVE_TOKEN: ${{ secrets.RCLONE_GDRIVE_TOKEN }}
+        run: |
+          ROW_ID="${{ github.event.inputs.row_id || '2' }}"
+          VOICE_FOLDER_ID="1AgtKSIhgRDW4NfMJi5I1X1l2sXYgFh1e"
+          LOCAL_DIR="artifacts/voice_row_${ROW_ID}"
+          echo "Uploading from ${LOCAL_DIR} to ${VOICE_FOLDER_ID}..."
+          rclone copy "${LOCAL_DIR}" gdrive: --drive-root-folder-id "${VOICE_FOLDER_ID}" --include "*.wav" --retries 3 --retries-sleep 3s -v
+
+      - name: Upload Section Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice_row_${{ github.event.inputs.row_id || '2' }}_scene2
+          path: artifacts/voice_row_${{ github.event.inputs.row_id || '2' }}
+          retention-days: 7

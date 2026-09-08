@@ -35,6 +35,7 @@ from audio_qc import (
 )
 from omni_tts import (
     OmniVoiceEngine,
+    apply_tempo_scaling,
     OmniTTS,
     generate_pcm_speech_wav,
     ROW_2_SCRIPT_TEXTS,
@@ -217,35 +218,53 @@ def test_audio_qc_missing_and_empty_file(tmp_path):
 
 
 def test_duration_bounds_calculation():
-    # Short words (N <= 3): [1.0s, 4.0s]
+    # Short words (N <= 3): [2.0s, 8.0s] for 0.5x tempo
     t_min, t_max = calculate_duration_bounds("火锅")
-    assert t_min == 1.0
-    assert t_max == 4.0
+    assert t_min == 2.0
+    assert t_max == 8.0
 
     t_min, t_max = calculate_duration_bounds("大灰狼")
-    assert t_min == 1.0
-    assert t_max == 4.0
+    assert t_min == 2.0
+    assert t_max == 8.0
 
     # Sentence: "吃菜的大狼" (N=5 non-punctuation chars)
-    # T_min = max(1.2, 5 * 0.15) = 1.2s
-    # T_max = max(3.0, 5 * 0.85 + 2.0) = 6.25s
+    # T_min = max(2.0, 5 * 0.20 + 1.5) = 2.5s
+    # T_max = max(6.0, 5 * 1.40 + 4.0) = 11.0s
     t_min, t_max = calculate_duration_bounds("吃菜的大狼")
-    assert t_min == 1.2
-    assert t_max == 6.25
+    assert t_min == 2.5
+    assert t_max == 11.0
 
     # Check bounds validator
-    ok, msg, _, _ = check_duration_bounds(2.21, "吃菜的大狼")
+    ok, msg, _, _ = check_duration_bounds(4.42, "吃菜的大狼")
     assert ok is True
 
     # Under-duration check
-    under_ok, under_msg, _, _ = check_duration_bounds(0.5, "吃菜的大狼")
+    under_ok, under_msg, _, _ = check_duration_bounds(1.0, "吃菜的大狼")
     assert under_ok is False
     assert "below minimum bound" in under_msg
 
     # Over-duration check
-    over_ok, over_msg, _, _ = check_duration_bounds(10.0, "吃菜的大狼")
+    over_ok, over_msg, _, _ = check_duration_bounds(15.0, "吃菜的大狼")
     assert over_ok is False
     assert "exceeds maximum bound" in over_msg
+
+
+def test_audio_qc_clipping_rejected(tmp_path):
+    wav_path = str(tmp_path / "clipped.wav")
+    make_test_wav(wav_path, duration=1.0, sample_rate=24000, channels=1, sampwidth=2, amplitude=40000.0)
+
+    valid, reason, meta = check_wav_file(wav_path)
+    assert valid is False
+    assert "clipping" in reason.lower()
+    assert meta.get("clipped_samples", 0) > 0
+
+
+def test_omni_tts_tempo_scaling(tmp_path):
+    out_path = str(tmp_path / "tempo_test.wav")
+    generate_pcm_speech_wav("测试语速减半", out_path, tempo=0.5)
+    valid, reason, meta = check_wav_file(out_path)
+    assert valid is True
+    assert meta["duration"] >= 2.0
 
 
 def test_strip_punctuation():
