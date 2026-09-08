@@ -1,0 +1,38 @@
+name: OmniVoice TTS - Orchestrator (7 Parallel Sub-Workflows)
+
+on:
+  workflow_dispatch:
+    inputs:
+      row_id:
+        description: 'Target Sheet Row Number (# ID)'
+        required: true
+        default: '2'
+
+jobs:
+  launch_parallel_7_workflows:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Cache OmniVoice (k2-fsa) Models
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/omnivoice
+            ~/.cache/k2-fsa
+          key: omnivoice-k2fsa-model-v1
+          restore-keys: |
+            omnivoice-k2fsa-model-
+
+      - name: Launch 7 Parallel Story Sub-Workflows
+        env:
+          GITHUB_TOKEN: ${{ secrets.PIPELINE_PAT }}
+        run: |
+          echo "🚀 Triggering 7 Parallel OmniVoice Sub-Workflows for Row #${{ github.event.inputs.row_id }}..."
+          python src/parallel_orchestrator.py --row-id "${{ github.event.inputs.row_id }}"

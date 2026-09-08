@@ -1,17 +1,1 @@
-name: Parallel Sub-Workflow 2 - Hanzi Story
-
-on:
-  workflow_call:
-  workflow_dispatch:
-
-jobs:
-  run_hanzi_story:
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - run: |
-          pip install -r requirements.txt
-          echo "Hanzi Story asset sub-workflow complete."
+# REMOVED OLD WRONG WORKFLOW (replaced by 7 Story Sub-Workflows + GK3 Audit)

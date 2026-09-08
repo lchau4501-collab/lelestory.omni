@@ -1,0 +1,4 @@
+*.md
+docs/
+*.zip
+.env
