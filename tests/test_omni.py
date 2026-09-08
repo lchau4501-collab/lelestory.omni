@@ -527,6 +527,7 @@ def test_build_atempo_filter_chain_standard_values():
     """Verify filter chain generation for standard and sub-half tempo values."""
     assert build_atempo_filter_chain(1.0) == ""
     assert build_atempo_filter_chain(0.85) == "atempo=0.85"
+    assert build_atempo_filter_chain(0.95) == "atempo=0.95"
     assert build_atempo_filter_chain(0.5) == "atempo=0.5"
     assert build_atempo_filter_chain(0.4) == "atempo=0.5,atempo=0.8"
     assert build_atempo_filter_chain(0.25) == "atempo=0.5,atempo=0.5"

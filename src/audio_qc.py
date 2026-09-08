@@ -3,7 +3,7 @@ Audio Quality Control (QC) and Acoustic Integrity Verification Module.
 Validates 24,000 Hz mono 16-bit PCM WAV audio characteristics,
 minimum RMS amplitude (silence rejection), dynamic speech duration bounding,
 and digital peak clipping detection.
-Calibrated for 0.85x speech tempo (~1.18x duration vs baseline).
+Calibrated for 0.95x speech tempo (~1.18x duration vs baseline).
 """
 
 import os
@@ -39,9 +39,9 @@ def strip_punctuation(text: str) -> str:
 def calculate_duration_bounds(text: str) -> Tuple[float, float]:
     """
     Calculates dynamic Chinese speech duration bounds [T_min, T_max] based on character count N,
-    calibrated for 0.85x speech tempo (~1.18x duration vs baseline, pitch-preserved).
+    calibrated for 0.95x speech tempo (~1.18x duration vs baseline, pitch-preserved).
     
-    Formula for 0.85x tempo:
+    Formula for 0.95x tempo:
       N = non-punctuation character count
       If N <= 3: T in [0.5s, 5.0s]
       If N > 3:

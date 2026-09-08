@@ -1,7 +1,7 @@
 """
 Gatekeeper 3 (GK3) Quality Audit, Provenance Verification, Self-Healing, and Google Sheet Sync.
 Audits all 12 WAV files for Story Row #2 (and dynamic rows) against strict acoustic criteria,
-Chinese character duration bounds (calibrated for 0.85x tempo), and OmniVoice neural cloning provenance.
+Chinese character duration bounds (calibrated for 0.95x tempo), and OmniVoice neural cloning provenance.
 Targeted self-healing triggers ONLY failed sub-workflows with dynamically resolved voice folder ID.
 """
 
@@ -227,7 +227,7 @@ class Gatekeeper3:
         Comprehensive GK3 audit of all 12 WAV files for the specified row_id:
         1. Presence check (all 12 files must exist).
         2. Acoustic QC check (24000Hz, mono, 16-bit, RMS >= 500, clipping <= 1%).
-        3. Dynamic Duration Bounding (corresponds to Chinese script character count N at 0.85x tempo).
+        3. Dynamic Duration Bounding (corresponds to Chinese script character count N at 0.95x tempo).
         4. Provenance check (OmniVoice neural engine, zero Edge-TTS).
         5. Self-Healing (targeted re-dispatch of failing sub-workflows).
         6. Sheet Synchronization on complete pass.
@@ -299,7 +299,7 @@ class Gatekeeper3:
                 all_valid = False
                 failed_sections.add(section)
 
-            # 2. Duration Bounding Check (0.85x calibrated)
+            # 2. Duration Bounding Check (0.95x calibrated)
             dur = wav_meta.get("duration", 0.0)
             valid_dur, dur_reason, t_min, t_max = check_duration_bounds(dur, expected_text)
             file_report["duration_qc"] = valid_dur

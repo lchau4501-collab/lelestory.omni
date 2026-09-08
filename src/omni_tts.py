@@ -4,7 +4,7 @@ Synthesizes authentic Chinese story audio sections using sherpa-onnx neural zero
 matching the reference voice Vegetarian Wolf.wav (Google Drive ID 1DpUPJQx-s41jJ25I0PE8HbfVW_DPXHEX).
 Strictly 24,000 Hz, mono, 16-bit PCM WAV output. Strictly ZERO Edge-TTS. Zero sine-wave synthesizer facade.
 Prioritizes loading pinned reference voice sample from ~/.cache/omnivoice/voice_samples/reference.wav.
-Supports calibrated 0.85x speech tempo reduction (-af "atempo=0.85") while preserving pitch, tone, and vocal timbre.
+Supports calibrated 0.95x speech tempo reduction (-af "atempo=0.95") while preserving pitch, tone, and vocal timbre.
 """
 
 import os
@@ -63,7 +63,7 @@ def build_atempo_filter_chain(tempo: float) -> str:
     FFmpeg's 'atempo' filter accepts values in [0.5, 2.0].
     For tempos < 0.5 or > 2.0, chains multiple atempo filters in series.
     Examples:
-      tempo=0.85 -> 'atempo=0.85'
+      tempo=0.95 -> 'atempo=0.95'
       tempo=0.5  -> 'atempo=0.5'
       tempo=0.4  -> 'atempo=0.5,atempo=0.8'
       tempo=0.25 -> 'atempo=0.5,atempo=0.5'
@@ -101,9 +101,9 @@ def build_atempo_filter_chain(tempo: float) -> str:
 build_atempo_filter = build_atempo_filter_chain
 
 
-def apply_tempo_scaling(wav_path: str, tempo: float = 0.85) -> str:
+def apply_tempo_scaling(wav_path: str, tempo: float = 0.95) -> str:
     """
-    Applies pitch-preserving time-stretching (default tempo=0.85 for 15% reduction)
+    Applies pitch-preserving time-stretching (default tempo=0.95 for 5% reduction)
     using ffmpeg filter atempo with automatic filter chaining for tempos < 0.5 or > 2.0,
     maintaining strictly 24,000 Hz mono 16-bit PCM WAV format.
     """
@@ -151,7 +151,7 @@ def _synthesize_neural_sherpa(
     text: str,
     output_path: str,
     reference_wav_path: Optional[str] = None,
-    tempo: float = 0.85
+    tempo: float = 0.95
 ) -> bool:
     """
     Performs authentic neural speech synthesis using k2-fsa sherpa-onnx.
@@ -275,14 +275,14 @@ def generate_pcm_speech_wav(
     text: str,
     output_path: str,
     target_duration: Optional[float] = None,
-    tempo: float = 0.85,
+    tempo: float = 0.95,
     reference_wav_path: Optional[str] = None
 ) -> str:
     """
     Generates genuine 24,000 Hz mono 16-bit PCM WAV speech audio via sherpa-onnx.
     Raises RuntimeError immediately if neural inference fails or models are missing.
     Strictly NO math.sin fallback.
-    Applies pitch-preserving tempo scaling (default: 0.85x).
+    Applies pitch-preserving tempo scaling (default: 0.95x).
     """
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
@@ -303,7 +303,7 @@ class OmniVoiceEngine:
     OmniVoice (k2-fsa) Neural Voice Cloning Engine.
     Produces 24 kHz mono 16-bit PCM WAV speech audio matching reference voice sample.
     Checks pinned cache path ~/.cache/omnivoice/voice_samples/reference.wav first.
-    Applies pitch-preserving 0.85x tempo scaling.
+    Applies pitch-preserving 0.95x tempo scaling.
     """
 
     def __init__(
@@ -362,10 +362,10 @@ class OmniVoiceEngine:
         text: Optional[str] = None,
         output_dir: Optional[str] = None,
         row_id: int = 2,
-        tempo: float = 0.85
+        tempo: float = 0.95
     ) -> Dict[str, Any]:
         """
-        Synthesizes audio for a story section at 0.85x tempo (pitch-preserved).
+        Synthesizes audio for a story section at 0.95x tempo (pitch-preserved).
         For vocab, synthesizes individual vocab_1.wav..vocab_5.wav AND vocab.wav.
         Prioritizes pinned reference voice in cache.
         """
@@ -470,8 +470,8 @@ class OmniVoiceEngine:
             zh_path = os.path.join(output_dir, f"line_{idx}_zh.wav")
             vi_path = os.path.join(output_dir, f"line_{idx}_vi.wav")
 
-            generate_pcm_speech_wav(zh_text, zh_path, tempo=0.85)
-            generate_pcm_speech_wav(vi_text, vi_path, tempo=0.85)
+            generate_pcm_speech_wav(zh_text, zh_path, tempo=0.95)
+            generate_pcm_speech_wav(vi_text, vi_path, tempo=0.95)
 
             audio_manifest.append({
                 "line_index": idx,
@@ -500,7 +500,7 @@ def main():
         help="Story section"
     )
     parser.add_argument("--output-dir", type=str, default=None, help="Output directory")
-    parser.add_argument("--tempo", type=float, default=0.85, help="Speech tempo scaling (default: 0.85)")
+    parser.add_argument("--tempo", type=float, default=0.95, help="Speech tempo scaling (default: 0.95)")
     args = parser.parse_args()
 
     engine = OmniVoiceEngine()
