@@ -7,6 +7,8 @@ on:
         description: 'Target Sheet Row Number (# ID)'
         required: true
         default: '2'
+  repository_dispatch:
+    types: [script_gk2_passed]
 
 jobs:
   launch_parallel_7_workflows:
@@ -34,5 +36,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.PIPELINE_PAT }}
         run: |
-          echo "🚀 Triggering 7 Parallel OmniVoice Sub-Workflows for Row #${{ github.event.inputs.row_id }}..."
-          python src/parallel_orchestrator.py --row-id "${{ github.event.inputs.row_id }}"
+          TARGET_ROW="${{ github.event.inputs.row_id || github.event.client_payload.batch_id || '2' }}"
+          echo "🚀 Triggering 7 Parallel OmniVoice Sub-Workflows for Row #${TARGET_ROW}..."
+          python src/parallel_orchestrator.py --row-id "${TARGET_ROW}"
