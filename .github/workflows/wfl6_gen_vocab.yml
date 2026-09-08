@@ -58,7 +58,7 @@ jobs:
           GOOGLE_SA_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
         run: |
           echo "🎙️ Synthesizing OmniVoice section 'vocab' for Row #${{ github.event.inputs.row_id }}..."
-          python src/omni_tts.py --row-id "${{ github.event.inputs.row_id }}" --section "vocab" --tempo 0.95
+          python src/omni_tts.py --row-id "${{ github.event.inputs.row_id }}" --section "vocab" --tempo 1.0
 
       - name: Install rclone
         run: |
