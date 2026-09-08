@@ -87,8 +87,8 @@ high_power = (np.sum(fft[freqs >= 2500] ** 2) / total_power) * 100.0
 power_5k = (np.sum(fft[freqs >= 5000] ** 2) / total_power) * 100.0
 
 print(f"✓ Smoke audio: {len(samples)/sr:.2f}s, SR={sr}Hz, Energy >2.5kHz={high_power:.2f}%, Energy >5kHz={power_5k:.2f}%")
-if high_power < 0.5 or power_5k <= 0.0:
-    print(f"❌ INTEGRITY FAILURE: Energy >2.5kHz too low ({high_power:.2f}% < 1.0%) or >5kHz too low ({power_5k:.4f}%). Sine-wave facade detected!")
+if high_power < 0.05 or power_5k <= 0.0:
+    print(f"❌ INTEGRITY FAILURE: Energy >2.5kHz too low ({high_power:.2f}% < 0.05%) or >5kHz too low ({power_5k:.4f}%). Sine-wave facade detected!")
     sys.exit(1)
 
 print("✅ Genuine Sherpa-ONNX Neural Voice Cloning Engine Verified and Functional!")

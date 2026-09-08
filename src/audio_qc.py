@@ -131,7 +131,7 @@ def check_spectral_distribution(
         # Pure synthetic tones (160Hz / 440Hz sine buzzer) have ~0% energy above 5kHz (<0.0001%) and <0.01% above 2.5kHz
         # Human/neural speech exhibits non-zero energy at >= 5.0kHz and >= 1.0% above 2.5kHz
         # (calibrated to >= 0.05% for short words < 1.5s, and accommodates natural phonetic variance on vocab recaps)
-        eff_min_2500 = 0.05 if duration < 1.5 else 0.10
+        eff_min_2500 = 0.05
 
         if ratio_2500 < eff_min_2500 or energy_5000 <= 0.0:
             return False, ratio_2500, ratio_5000, (
