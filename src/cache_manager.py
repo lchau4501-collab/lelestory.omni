@@ -1,7 +1,7 @@
 """
 OmniVoice (k2-fsa) Model Cache Manager for LeLe Storybook Video Engine.
 Manages downloading, verifying, and maintaining genuine OmniVoice and k2-fsa sherpa-onnx model checkpoints
-in ~/.cache/omnivoice and ~/.cache/k2-fsa, including pinning reference voice sample (Vegetarian Wolf.wav)
+in ~/.cache/omnivoice and ~/.cache/k2-fsa, including pinning reference voice sample (Vegetarian WolfZ.wav)
 in ~/.cache/omnivoice/voice_samples/reference.wav with exact spoken transcript in reference.txt.
 """
 
@@ -22,9 +22,10 @@ VOICE_SAMPLES_CACHE_DIR = os.path.join(OMNIVOICE_CACHE_DIR, "voice_samples")
 PINNED_VOICE_SAMPLE_PATH = os.path.join(VOICE_SAMPLES_CACHE_DIR, "reference.wav")
 PINNED_VOICE_TEXT_PATH = os.path.join(VOICE_SAMPLES_CACHE_DIR, "reference.txt")
 
-REFERENCE_GDRIVE_FILE_ID = "1DpUPJQx-s41jJ25I0PE8HbfVW_DPXHEX"
-REFERENCE_SAMPLE_FILENAME = "Vegetarian Wolf.wav"
-REFERENCE_TRANSCRIPT = "黑哥走到了山上，对山羊们说，我只吃菜，你们可以安心，"
+# Legacy GDrive file ID permanently eradicated per user policy
+REFERENCE_GDRIVE_FILE_ID = ""
+REFERENCE_SAMPLE_FILENAME = "Vegetarian WolfZ.wav"
+REFERENCE_TRANSCRIPT = "我只吃菜，你们可以安心，我不会吃你们的，"
 
 # Authoritative upstream model checkpoint URLs from k2-fsa releases
 ZIPVOICE_MODEL_TAR_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-zipvoice-distill-int8-zh-en-emilia.tar.bz2"
@@ -155,12 +156,14 @@ class ModelCacheManager:
         candidate_sources = [
             os.path.join(repo_root, "assets", "reference.wav"),
             "assets/reference.wav",
-            os.path.join(self.voice_samples_dir, "Vegetarian Wolf.wav"),
+            os.path.join(repo_root, "assets", "Vegetarian WolfZ.wav"),
+            "assets/Vegetarian WolfZ.wav",
+            os.path.join(self.voice_samples_dir, "Vegetarian WolfZ.wav"),
             os.path.join(self.omnivoice_dir, REFERENCE_SAMPLE_FILENAME),
             os.path.expanduser(f"~/.cache/omnivoice/voice_samples/reference.wav"),
             os.path.expanduser(f"~/.cache/omnivoice/{REFERENCE_SAMPLE_FILENAME}"),
-            "/tmp/real_vegetarian_wolf.wav",
-            "/tmp/Vegetarian Wolf.wav",
+            "/tmp/Vegetarian_WolfZ.wav",
+            "/tmp/Vegetarian WolfZ.wav",
         ]
 
         for cand in candidate_sources:

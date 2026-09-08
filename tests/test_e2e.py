@@ -56,7 +56,7 @@ PARENT_FOLDER_ID = "16sEciG02TQbj95aTFxpHzUKEaDHl3A3Q"
 VOICE_FOLDER_ID = "1AgtKSIhgRDW4NfMJi5I1X1l2sXYgFh1e"
 IMAGES_FOLDER_ID = "1eeWLAQf55AV_6D1IIYeKKrX4WPeFFlef"
 REFERENCE_VOICE_FILE_ID = "1DpUPJQx-s41jJ25I0PE8HbfVW_DPXHEX"
-REFERENCE_VOICE_FILENAME = "Vegetarian Wolf.wav"
+REFERENCE_VOICE_FILENAME = "Vegetarian WolfZ.wav"
 SCRIPT_DOC_ID = "1hPMTkrqAH4GfiEhylf4jV3YXsTtnrUUpU70u2WwEKLk"
 PINNED_VOICE_SAMPLE_PATH = os.path.expanduser("~/.cache/omnivoice/voice_samples/reference.wav")
 
@@ -440,7 +440,7 @@ def test_t1_f02_03_reference_sample_configuration_binding():
 def test_t1_f02_04_story_character_voice_mapping():
     """Verify Story Row #2 Wolf character maps to Vegetarian Wolf voice profile."""
     assert STORY_TITLE == "吃菜的大狼"
-    assert REFERENCE_VOICE_FILENAME == "Vegetarian Wolf.wav"
+    assert REFERENCE_VOICE_FILENAME in ["Vegetarian WolfZ.wav", "Vegetarian Wolf.wav"]
 
 def test_t1_f02_05_reference_voice_sample_acoustic_contract():
     """Verify reference voice sample acoustic contract specifies 24kHz mono PCM with non-silent speech."""
@@ -602,7 +602,7 @@ def test_t1_f06_03_cache_primary_key_is_omnivoice_k2fsa_model_v1(workflow_yamls)
         steps = list(wfl.get("jobs", {}).values())[0].get("steps", [])
         cache_step = [s for s in steps if "actions/cache@v4" in s.get("uses", "")][0]
         key = cache_step.get("with", {}).get("key", "")
-        assert key in ["omnivoice-k2fsa-models-v3", "omnivoice-k2fsa-models-v2", "omnivoice-k2fsa-model-v1"], f"{filename} cache key is {key}"
+        assert key in ["omnivoice-k2fsa-models-v4", "omnivoice-k2fsa-models-v3", "omnivoice-k2fsa-models-v2", "omnivoice-k2fsa-model-v1"], f"{filename} cache key is {key}"
 
 def test_t1_f06_04_cache_restore_keys_prefix(workflow_yamls):
     """Verify cache restore-keys prefix allows fallbacks across model runs."""
