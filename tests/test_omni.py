@@ -36,6 +36,7 @@ from audio_qc import (
 from omni_tts import (
     OmniVoiceEngine,
     apply_tempo_scaling,
+    build_atempo_filter_chain,
     OmniTTS,
     generate_pcm_speech_wav,
     ROW_2_SCRIPT_TEXTS,
@@ -218,28 +219,28 @@ def test_audio_qc_missing_and_empty_file(tmp_path):
 
 
 def test_duration_bounds_calculation():
-    # Short words (N <= 3): [2.0s, 8.0s] for 0.5x tempo
+    # Short words (N <= 3): [0.5s, 5.0s] for 0.85x tempo
     t_min, t_max = calculate_duration_bounds("火锅")
-    assert t_min == 2.0
-    assert t_max == 8.0
+    assert t_min == 0.5
+    assert t_max == 5.0
 
     t_min, t_max = calculate_duration_bounds("大灰狼")
-    assert t_min == 2.0
-    assert t_max == 8.0
+    assert t_min == 0.5
+    assert t_max == 5.0
 
     # Sentence: "吃菜的大狼" (N=5 non-punctuation chars)
-    # T_min = max(2.0, 5 * 0.20 + 1.5) = 2.5s
-    # T_max = max(6.0, 5 * 1.40 + 4.0) = 11.0s
+    # T_min = max(1.0, round(5 * 0.15, 2)) = 1.0s
+    # T_max = max(4.0, round(5 * 1.05 + 2.5, 2)) = 7.75s
     t_min, t_max = calculate_duration_bounds("吃菜的大狼")
-    assert t_min == 2.5
-    assert t_max == 11.0
+    assert t_min == 1.0
+    assert t_max == 7.75
 
     # Check bounds validator
-    ok, msg, _, _ = check_duration_bounds(4.42, "吃菜的大狼")
+    ok, msg, _, _ = check_duration_bounds(1.26, "吃菜的大狼")
     assert ok is True
 
     # Under-duration check
-    under_ok, under_msg, _, _ = check_duration_bounds(1.0, "吃菜的大狼")
+    under_ok, under_msg, _, _ = check_duration_bounds(0.3, "吃菜的大狼")
     assert under_ok is False
     assert "below minimum bound" in under_msg
 
@@ -472,7 +473,7 @@ def test_gatekeeper3_self_healing_targeted_redispatch(tmp_path):
         assert passed is False
         assert "scene3" in report["failed_sections"]
         # Verify self-healing triggered ONLY wfl4_gen_scene3.yml
-        mock_dispatch.assert_called_once_with("wfl4_gen_scene3.yml", row_id=2)
+        mock_dispatch.assert_called_once_with("wfl4_gen_scene3.yml", row_id=2, voice_folder_id="1AgtKSIhgRDW4NfMJi5I1X1l2sXYgFh1e")
         assert "scene3" in report["self_healed"]
         assert report["self_healed"]["scene3"]["workflow"] == "wfl4_gen_scene3.yml"
 
@@ -492,3 +493,106 @@ def test_gatekeeper3_validate_manifest_pass(tmp_path):
     passed, reason, updated = gk3.validate(manifest)
     assert passed is True
     assert updated["status"] == "GK3_Passed"
+
+
+# ============================================================================
+# 6. Additional Tests for 0.85x Tempo, Filter Chaining, and Drive Resolution
+# ============================================================================
+
+def test_build_atempo_filter_chain_standard_values():
+    """Verify filter chain generation for standard and sub-half tempo values."""
+    assert build_atempo_filter_chain(1.0) == ""
+    assert build_atempo_filter_chain(0.85) == "atempo=0.85"
+    assert build_atempo_filter_chain(0.5) == "atempo=0.5"
+    assert build_atempo_filter_chain(0.4) == "atempo=0.5,atempo=0.8"
+    assert build_atempo_filter_chain(0.25) == "atempo=0.5,atempo=0.5"
+    assert build_atempo_filter_chain(2.0) == "atempo=2"
+    assert build_atempo_filter_chain(2.5) == "atempo=2,atempo=1.25"
+
+
+def test_build_atempo_filter_chain_invalid_tempo():
+    """Verify non-positive tempos raise ValueError."""
+    with pytest.raises(ValueError):
+        build_atempo_filter_chain(0.0)
+    with pytest.raises(ValueError):
+        build_atempo_filter_chain(-0.5)
+
+
+def test_apply_tempo_scaling_085x(tmp_path):
+    """Verify active 0.85x tempo scaling preserves 24kHz mono 16-bit PCM and scales duration."""
+    test_wav = str(tmp_path / "test_085.wav")
+    make_test_wav(test_wav, duration=2.0, sample_rate=24000, channels=1, sampwidth=2, amplitude=4000.0)
+
+    apply_tempo_scaling(test_wav, tempo=0.85)
+    valid, reason, meta = check_wav_file(test_wav)
+    assert valid is True
+    assert meta["sample_rate"] == 24000
+    assert meta["channels"] == 1
+    assert meta["sampwidth"] == 2
+    assert meta["rms"] >= 500.0
+    assert abs(meta["duration"] - (2.0 / 0.85)) < 0.05
+
+
+def test_apply_tempo_scaling_chained_sub_half(tmp_path):
+    """Verify filter chaining executes successfully for tempo < 0.5 (0.4x)."""
+    test_wav = str(tmp_path / "test_04.wav")
+    make_test_wav(test_wav, duration=2.0, sample_rate=24000, channels=1, sampwidth=2, amplitude=4000.0)
+
+    apply_tempo_scaling(test_wav, tempo=0.4)
+    valid, reason, meta = check_wav_file(test_wav)
+    assert valid is True
+    assert abs(meta["duration"] - 5.0) < 0.1
+
+
+def test_apply_tempo_scaling_chained_super_double(tmp_path):
+    """Verify filter chaining executes successfully for tempo > 2.0 (2.5x)."""
+    test_wav = str(tmp_path / "test_25.wav")
+    make_test_wav(test_wav, duration=2.0, sample_rate=24000, channels=1, sampwidth=2, amplitude=4000.0)
+
+    apply_tempo_scaling(test_wav, tempo=2.5)
+    valid, reason, meta = check_wav_file(test_wav)
+    assert valid is True
+    assert abs(meta["duration"] - 0.8) < 0.05
+
+
+def test_apply_tempo_scaling_identity_noop(tmp_path):
+    """Verify tempo=1.0 performs zero modification."""
+    test_wav = str(tmp_path / "test_10.wav")
+    make_test_wav(test_wav, duration=2.0, sample_rate=24000, channels=1, sampwidth=2, amplitude=4000.0)
+    orig_size = os.path.getsize(test_wav)
+
+    apply_tempo_scaling(test_wav, tempo=1.0)
+    assert os.path.getsize(test_wav) == orig_size
+
+
+def test_duration_bounds_calibration_085x():
+    """Verify duration bounds calibration for 0.85x tempo."""
+    t_min, t_max = calculate_duration_bounds("火锅")
+    assert t_min == 0.5
+    assert t_max == 5.0
+
+    t_min, t_max = calculate_duration_bounds("吃菜的大狼")
+    assert t_min == 1.0
+    assert t_max == 7.75
+
+    ok, _, _, _ = check_duration_bounds(1.26, "吃菜的大狼")
+    assert ok is True
+
+
+def test_dynamic_folder_resolution_in_orchestrator(monkeypatch):
+    """Verify orchestrator passes dynamic voice folder ID and does not hardcode Row #2 ID."""
+    from parallel_orchestrator import ParallelOrchestrator
+    orch = ParallelOrchestrator(token="dummy_token")
+
+    captured_payload = {}
+    def mock_post(url, headers, json, timeout):
+        nonlocal captured_payload
+        captured_payload = json
+        class MockResp:
+            status_code = 204
+        return MockResp()
+
+    monkeypatch.setattr("requests.post", mock_post)
+    orch.dispatch_workflow("wfl1_gen_title.yml", row_id=3, voice_folder_id="custom_folder_123")
+    assert captured_payload["inputs"]["row_id"] == "3"
+    assert captured_payload["inputs"]["voice_folder_id"] == "custom_folder_123"

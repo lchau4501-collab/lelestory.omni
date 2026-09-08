@@ -29,6 +29,9 @@ Tiers:
 
 import os
 import sys
+
+# Ensure src directory is in sys.path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 import re
 import json
 import math
@@ -1989,3 +1992,66 @@ def test_t4_05_scenario_master_google_sheet_atomic_sync_verification(sheets_clie
     assert state_v1["values"][0][3] == state_v2["values"][0][3]
     assert state_v1["values"][0][5] == state_v2["values"][0][5]
 
+
+
+# ==============================================================================
+# FEATURE 15: 0.85X SPEECH TEMPO SCALING & PITCH PRESERVATION (M6 Acceptance)
+# ==============================================================================
+
+def test_t1_f15_01_tempo_085x_scaling_preserves_acoustic_format(tmp_path):
+    """Verify 0.85x tempo scaling preserves 24,000 Hz, mono, 16-bit PCM format."""
+    from omni_tts import generate_pcm_speech_wav
+    from audio_qc import check_wav_file
+    out_wav = str(tmp_path / "f15_title.wav")
+    generate_pcm_speech_wav("吃菜的大狼", out_wav, tempo=0.85)
+
+    valid, reason, meta = check_wav_file(out_wav)
+    assert valid is True
+    assert meta["sample_rate"] == 24000
+    assert meta["channels"] == 1
+    assert meta["sampwidth"] == 2
+    assert meta["rms"] >= 500.0
+    assert meta["clipped_samples"] == 0
+
+
+def test_t1_f15_02_pitch_preservation_across_tempo_scaling(tmp_path):
+    """Verify tempo scaling preserves constant pitch without frequency shifting."""
+    from omni_tts import build_atempo_filter_chain
+    chain = build_atempo_filter_chain(0.85)
+    assert "atempo" in chain
+    assert "asetrate" not in chain
+
+
+def test_t1_f15_03_atempo_filter_chaining_decomposition():
+    """Verify filter chaining decomposition handles boundary tempos (<0.5, >2.0)."""
+    from omni_tts import build_atempo_filter_chain
+    for t in [0.25, 0.4, 0.5, 0.85, 1.0, 1.5, 2.0, 2.5]:
+        chain = build_atempo_filter_chain(t)
+        if chain:
+            factors = [float(p.split("=")[1]) for p in chain.split(",")]
+            for f in factors:
+                assert 0.5 <= f <= 2.0
+            prod = 1.0
+            for f in factors:
+                prod *= f
+            assert abs(prod - t) < 1e-4
+
+
+def test_t1_f15_04_manifest_records_tempo_and_filter_chain(tmp_path):
+    """Verify synthesis manifests record tempo metadata and filter receipt."""
+    from omni_tts import OmniVoiceEngine
+    engine = OmniVoiceEngine()
+    res = engine.synthesize_section("title", output_dir=str(tmp_path), row_id=2, tempo=0.85)
+    with open(res["manifest"], "r", encoding="utf-8") as f:
+        meta = json.load(f)
+    assert meta["tempo"] == 0.85
+    assert meta["tempo_filter"] == "atempo=0.85"
+    assert meta["pitch_preserved"] is True
+
+
+def test_t1_f15_05_audio_qc_accepts_085x_calibrated_durations():
+    """Verify audio QC check_duration_bounds accepts 0.85x scaled durations."""
+    from audio_qc import check_duration_bounds
+    ok, msg, t_min, t_max = check_duration_bounds(2.35, "吃菜的大狼")
+    assert ok is True
+    assert t_min <= 2.35 <= t_max

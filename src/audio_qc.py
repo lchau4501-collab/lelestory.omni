@@ -1,24 +1,25 @@
 """
-Audio Quality Control (QC) Module for LeLe Storybook Video Engine.
-Validates 24,000 Hz mono 16-bit PCM WAV audio, RMS amplitude >= 500,
-peak digital clipping detection, and Chinese character duration bounding
-calibrated for 0.5x speech tempo (~2x duration).
+Audio Quality Control (QC) and Acoustic Integrity Verification Module.
+Validates 24,000 Hz mono 16-bit PCM WAV audio characteristics,
+minimum RMS amplitude (silence rejection), dynamic speech duration bounding,
+and digital peak clipping detection.
+Calibrated for 0.85x speech tempo (~1.18x duration vs baseline).
 """
 
 import os
+import re
 import wave
 import struct
 import math
-import re
 import logging
 from typing import Tuple, Dict, Any, Optional
 
-logger = logging.getLogger("lelestory.omni.audio_qc")
+logger = logging.getLogger("lelestory.omni.qc")
 
-# Default acoustic thresholds
-DEFAULT_SAMPLE_RATE = 24000
-DEFAULT_CHANNELS = 1          # mono
-DEFAULT_BIT_DEPTH = 16        # 16-bit PCM (sampwidth = 2)
+DEFAULT_SAMPLE_RATE = 24000  # Strictly 24 kHz
+DEFAULT_CHANNELS = 1         # Strictly Mono
+DEFAULT_SAMPWIDTH = 2        # 16-bit PCM (2 bytes)
+DEFAULT_BIT_DEPTH = 16
 DEFAULT_MIN_RMS = 500.0       # Minimum RMS amplitude to reject silence
 DEFAULT_MIN_DURATION = 0.5    # Minimum absolute seconds
 DEFAULT_MAX_CLIPPING_RATIO = 0.01  # Maximum 1% digital clipping threshold
@@ -37,24 +38,24 @@ def strip_punctuation(text: str) -> str:
 def calculate_duration_bounds(text: str) -> Tuple[float, float]:
     """
     Calculates dynamic Chinese speech duration bounds [T_min, T_max] based on character count N,
-    calibrated for 0.5x speech tempo (~2x duration, pitch-preserved).
+    calibrated for 0.85x speech tempo (~1.18x duration vs baseline, pitch-preserved).
     
-    Formula for 0.5x tempo:
+    Formula for 0.85x tempo:
       N = non-punctuation character count
-      If N <= 3: T in [2.0s, 8.0s]
+      If N <= 3: T in [0.5s, 5.0s]
       If N > 3:
-        T_min = max(2.0s, round(N * 0.20 + 1.5, 2))
-        T_max = max(6.0s, round(N * 1.40 + 4.0, 2))
+        T_min = max(1.0, round(N * 0.15, 2))
+        T_max = max(4.0, round(N * 1.05 + 2.5, 2))
     """
     stripped = strip_punctuation(text)
     n = len(stripped)
 
     if n <= 3:
-        t_min = 2.0
-        t_max = 8.0
+        t_min = 0.5
+        t_max = 5.0
     else:
-        t_min = max(2.0, round(n * 0.20 + 1.5, 2))
-        t_max = max(6.0, round(n * 1.40 + 4.0, 2))
+        t_min = max(1.0, round(n * 0.15, 2))
+        t_max = max(4.0, round(n * 1.05 + 2.5, 2))
 
     return round(t_min, 2), round(t_max, 2)
 

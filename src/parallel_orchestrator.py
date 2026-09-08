@@ -1,7 +1,7 @@
 """
-Parallel Sub-Workflow Orchestrator for LeLe Storybook OmniVoice Pipeline.
-Dispatches the 7 parallel story audio generation sub-workflows (wfl1 to wfl7)
-concurrently via GitHub Actions REST API or gh CLI.
+Parallel Workflow Orchestration Dispatcher for LeLe Storybook OmniVoice Video Engine.
+Triggers the 7 section generator sub-workflows concurrently using GitHub Actions REST API / gh CLI.
+Integrates with Google Drive resolver to dynamically pass voice_folder_id.
 """
 
 import os
@@ -66,7 +66,6 @@ class ParallelOrchestrator:
     def _get_token(self) -> Optional[str]:
         if self.token:
             return self.token
-        # Try fetching from gh CLI if available
         try:
             res = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, timeout=5)
             if res.returncode == 0 and res.stdout.strip():
@@ -80,13 +79,13 @@ class ParallelOrchestrator:
         self,
         workflow_id: str,
         row_id: int = 2,
+        voice_folder_id: Optional[str] = None,
         ref: str = DEFAULT_REF
     ) -> Tuple[bool, str]:
         """
         Dispatches a single GitHub Actions workflow via REST API or gh CLI fallback.
         """
         token = self._get_token()
-        # Clean workflow identifier (ensure .yml extension if not provided)
         if not workflow_id.endswith(".yml") and not workflow_id.isdigit():
             workflow_file = SUB_WORKFLOWS.get(workflow_id, f"{workflow_id}.yml")
         else:
@@ -106,6 +105,9 @@ class ParallelOrchestrator:
                     "row_id": str(row_id)
                 }
             }
+            if voice_folder_id:
+                payload["inputs"]["voice_folder_id"] = str(voice_folder_id)
+
             try:
                 resp = requests.post(url, headers=headers, json=payload, timeout=15)
                 if resp.status_code in (200, 204):
@@ -120,6 +122,8 @@ class ParallelOrchestrator:
         # 2. Subprocess fallback using gh CLI
         try:
             cmd = ["gh", "workflow", "run", workflow_file, "-R", self.repo, "-r", ref, "-f", f"row_id={row_id}"]
+            if voice_folder_id:
+                cmd.extend(["-f", f"voice_folder_id={voice_folder_id}"])
             res = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
             if res.returncode == 0:
                 msg = f"Successfully dispatched {workflow_file} for Row #{row_id} via gh CLI"
@@ -137,18 +141,28 @@ class ParallelOrchestrator:
     def dispatch_all_parallel(
         self,
         row_id: int = 2,
+        voice_folder_id: Optional[str] = None,
         ref: str = DEFAULT_REF,
         max_workers: int = 7
     ) -> Dict[str, Tuple[bool, str]]:
         """
         Dispatches all 7 sub-workflows concurrently using ThreadPoolExecutor.
+        Pre-resolves voice_folder_id dynamically if not provided.
         """
+        if not voice_folder_id:
+            try:
+                from drive_resolver import resolve_voice_folder
+                voice_folder_id, _ = resolve_voice_folder(row_id)
+                logger.info(f"Pre-resolved voice_folder_id={voice_folder_id} for parallel dispatch.")
+            except Exception as e:
+                logger.warning(f"Could not pre-resolve voice_folder_id: {e}")
+
         results: Dict[str, Tuple[bool, str]] = {}
         logger.info(f"🚀 Dispatching {len(SUB_WORKFLOWS)} sub-workflows in parallel for Row #{row_id} on {self.repo}...")
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_section = {
-                executor.submit(self.dispatch_workflow, wf, row_id, ref): (section, wf)
+                executor.submit(self.dispatch_workflow, wf, row_id, voice_folder_id, ref): (section, wf)
                 for section, wf in SUB_WORKFLOWS.items()
             }
             for future in as_completed(future_to_section):
@@ -165,7 +179,6 @@ class ParallelOrchestrator:
         logger.info(f"Parallel dispatch complete: {sum(1 for s, _ in results.values() if s)}/{len(results)} succeeded.")
         return results
 
-    # Backward compatibility with legacy tests
     def compile_theme_assets(self, target_wf: str, audio_manifest: list) -> Dict[str, Any]:
         """Compiles theme-specific asset manifest for one of the workflows (backward compatibility)."""
         logger.info(f"Compiling assets for workflow '{target_wf}' (batch #{self.batch_id})")
@@ -185,6 +198,7 @@ class ParallelOrchestrator:
 def main():
     parser = argparse.ArgumentParser(description="Parallel OmniVoice Workflow Orchestrator")
     parser.add_argument("--row-id", type=int, default=2, help="Target Sheet Row Number (# ID)")
+    parser.add_argument("--voice-folder-id", type=str, default=None, help="Target Google Drive Voice Folder ID")
     parser.add_argument("--section", type=str, default=None, choices=list(SUB_WORKFLOWS.keys()) + ["all"], help="Specific section to trigger or 'all'")
     parser.add_argument("--repo", type=str, default=DEFAULT_REPO, help="GitHub repository (owner/repo)")
     parser.add_argument("--ref", type=str, default=DEFAULT_REF, help="Git branch or tag")
@@ -195,12 +209,12 @@ def main():
     if args.section and args.section != "all":
         wf_file = SUB_WORKFLOWS[args.section]
         print(f"Triggering single sub-workflow '{wf_file}' for section '{args.section}' (Row #{args.row_id})...")
-        success, msg = orchestrator.dispatch_workflow(wf_file, row_id=args.row_id, ref=args.ref)
+        success, msg = orchestrator.dispatch_workflow(wf_file, row_id=args.row_id, voice_folder_id=args.voice_folder_id, ref=args.ref)
         print(f"Result: {'SUCCESS' if success else 'FAILED'} - {msg}")
         sys.exit(0 if success else 1)
     else:
         print(f"Triggering 7 parallel sub-workflows for Row #{args.row_id}...")
-        results = orchestrator.dispatch_all_parallel(row_id=args.row_id, ref=args.ref)
+        results = orchestrator.dispatch_all_parallel(row_id=args.row_id, voice_folder_id=args.voice_folder_id, ref=args.ref)
         failures = 0
         for sec, (ok, msg) in results.items():
             print(f"  [{'OK' if ok else 'FAIL'}] {sec} ({SUB_WORKFLOWS[sec]}): {msg}")
