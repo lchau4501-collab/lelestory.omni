@@ -1,0 +1,23 @@
+name: Parallel Sub-Workflow 1 - TTS Audio
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  run_tts_audio:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Cache OmniVoice k2-fsa Model Checkpoints
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/omni_k2fsa
+          key: omni-k2fsa-models-${{ runner.os }}-${{ hashFiles('models.json') }}
+      - run: |
+          pip install -r requirements.txt
+          python src/cache_manager.py
+          echo "TTS Audio sub-workflow complete."
