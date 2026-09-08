@@ -12,6 +12,7 @@ import sys
 import json
 import wave
 import struct
+import numpy as np
 import math
 import shutil
 import hashlib
@@ -219,7 +220,11 @@ def _synthesize_neural_sherpa(
 
                     audio = tts.generate(text, gen_config)
                     if len(audio.samples) > 0:
-                        sf.write(output_path, audio.samples, samplerate=audio.sample_rate, subtype="PCM_16")
+                        samples = np.array(audio.samples, dtype=np.float32)
+                        peak = float(np.max(np.abs(samples)))
+                        if peak > 0:
+                            samples = (samples / peak) * 0.85
+                        sf.write(output_path, samples, samplerate=audio.sample_rate, subtype="PCM_16")
                         apply_tempo_scaling(output_path, tempo=tempo)
                         logger.info(f"Successfully generated ZipVoice neural speech at {output_path}")
                         return True
@@ -252,7 +257,11 @@ def _synthesize_neural_sherpa(
                     tts = sherpa_onnx.OfflineTts(tts_config)
                     audio = tts.generate(text, sid=66, speed=1.0)
                     if len(audio.samples) > 0:
-                        sherpa_onnx.write_wave(output_path, audio.samples, audio.sample_rate)
+                        samples = np.array(audio.samples, dtype=np.float32)
+                        peak = float(np.max(np.abs(samples)))
+                        if peak > 0:
+                            samples = (samples / peak) * 0.85
+                        sf.write(output_path, samples, samplerate=audio.sample_rate, subtype="PCM_16")
                         apply_tempo_scaling(output_path, tempo=tempo)
                         logger.info(f"Successfully generated VITS neural speech at {output_path}")
                         return True
@@ -270,10 +279,9 @@ def generate_pcm_speech_wav(
     reference_wav_path: Optional[str] = None
 ) -> str:
     """
-    Generates genuine 24,000 Hz mono 16-bit PCM WAV speech audio.
-    Executes sherpa-onnx neural model inference when available.
-    In environments where neural models are absent (e.g. lightweight unit test mocks),
-    synthesizes a valid acoustic waveform matching Audio QC parameters.
+    Generates genuine 24,000 Hz mono 16-bit PCM WAV speech audio via sherpa-onnx.
+    Raises RuntimeError immediately if neural inference fails or models are missing.
+    Strictly NO math.sin fallback.
     Applies pitch-preserving tempo scaling (default: 0.85x).
     """
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
@@ -282,56 +290,12 @@ def generate_pcm_speech_wav(
     if _synthesize_neural_sherpa(text, output_path, reference_wav_path, tempo=tempo):
         return output_path
 
-    # 2. Fallback acoustic synthesizer for offline unit tests / mock environments
-    from audio_qc import strip_punctuation, calculate_duration_bounds
-    stripped = strip_punctuation(text)
-    n_chars = max(1, len(stripped))
-
-    if target_duration is None:
-        t_min, t_max = calculate_duration_bounds(text)
-        target_duration = round(t_min + (t_max - t_min) * 0.35, 2)
-        if target_duration < 1.8:
-            target_duration = 2.0
-
-    # Base duration before tempo scaling
-    base_duration = max(1.0, round(target_duration * tempo, 2)) if abs(tempo - 1.0) > 1e-4 else target_duration
-    total_frames = int(SAMPLE_RATE * base_duration)
-    frames_data = bytearray()
-
-    syllable_rate = 3.5
-    base_f0 = 160.0
-
-    for i in range(total_frames):
-        t = float(i) / float(SAMPLE_RATE)
-        syllable_env = max(0.2, math.sin(2.0 * math.pi * syllable_rate * t) ** 2)
-        global_env = 1.0
-        fade_frames = int(0.05 * SAMPLE_RATE)
-        if i < fade_frames:
-            global_env = float(i) / float(fade_frames)
-        elif i > total_frames - fade_frames:
-            global_env = float(total_frames - i) / float(fade_frames)
-
-        f0 = base_f0 + 20.0 * math.sin(2.0 * math.pi * 1.5 * t)
-        s1 = math.sin(2.0 * math.pi * f0 * t)
-        s2 = 0.4 * math.sin(2.0 * math.pi * (f0 * 2.0) * t)
-        s3 = 0.2 * math.sin(2.0 * math.pi * 600.0 * t)
-        s4 = 0.1 * math.sin(2.0 * math.pi * 1500.0 * t)
-
-        sample_val = (s1 + s2 + s3 + s4) * 0.40 * syllable_env * global_env
-        pcm_int = int(sample_val * 8500.0)
-        pcm_int = max(-32767, min(32767, pcm_int))
-        frames_data.extend(struct.pack("<h", pcm_int))
-
-    with wave.open(output_path, "wb") as wf:
-        wf.setnchannels(CHANNELS)
-        wf.setsampwidth(SAMPWIDTH)
-        wf.setframerate(SAMPLE_RATE)
-        wf.writeframes(frames_data)
-
-    if abs(tempo - 1.0) > 1e-4:
-        apply_tempo_scaling(output_path, tempo=tempo)
-
-    return output_path
+    # If neural synthesis failed, FAIL FAST. Never produce buzzer tones!
+    raise RuntimeError(
+        f"Neural voice synthesis failed for text: '{text[:20]}...'. "
+        "Sherpa-ONNX models (zipvoice, vocos_24khz) are missing, corrupted, or incompatible. "
+        "Additive sine-wave fallback is eradicated."
+    )
 
 
 class OmniVoiceEngine:
@@ -386,9 +350,11 @@ class OmniVoiceEngine:
         except Exception as exc:
             logger.warning(f"Cache manager ensure_voice_sample_cached error: {exc}")
 
-        # 4. Synthesize acoustic reference
-        generate_pcm_speech_wav("吃菜的大狼 - 参考音色", self.pinned_sample_path, target_duration=2.2, tempo=1.0)
-        return self.pinned_sample_path
+        # 4. Fail fast if reference voice cannot be ensured
+        raise RuntimeError(
+            f"Reference voice sample could not be found or retrieved: {self.pinned_sample_path}. "
+            "Ensure reference.wav is pinned in ~/.cache/omnivoice/voice_samples/reference.wav."
+        )
 
     def synthesize_section(
         self,

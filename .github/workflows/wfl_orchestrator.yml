@@ -11,7 +11,7 @@ name: OmniVoice TTS - Orchestrator (7 Parallel Sub-Workflows)
     types: [script_gk2_passed]
 
 jobs:
-  launch_parallel_7_workflows:
+  prepare_model_cache:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout Code
@@ -28,22 +28,44 @@ jobs:
           path: |
             ~/.cache/omnivoice
             ~/.cache/k2-fsa
-          key: omnivoice-k2fsa-model-v1
+          key: omnivoice-k2fsa-models-v2
           restore-keys: |
+            omnivoice-k2fsa-models-v2
             omnivoice-k2fsa-model-
 
       - name: Install Dependencies
         run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
           python -m pip install --upgrade pip
-          pip install requests gspread google-auth sherpa-onnx soundfile
+          pip install requests gspread google-auth sherpa-onnx soundfile numpy
 
-      - name: Seed / Verify Pinned Reference Voice Sample in Cache
+      - name: Fast Seed / Verify Neural Models & Voice Sample
         env:
           GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
           GOOGLE_SA_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
         run: |
-          echo "🔊 Ensuring OmniVoice reference voice sample is pinned in ~/.cache/omnivoice/voice_samples/reference.wav..."
-          python -c "import sys; sys.path.insert(0, 'src'); from cache_manager import ModelCacheManager; mgr = ModelCacheManager(); mgr.ensure_models_cached(); p = mgr.ensure_voice_sample_cached(); print(f'Pinned sample verified at: {p}')"
+          bash scripts/seed_models_runner.sh
+
+      - name: Verify Neural Models & Smoke Test Inference
+        run: |
+          python scripts/verify_neural_models.py
+
+  launch_parallel_7_workflows:
+    needs: prepare_model_cache
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests gspread google-auth
 
       - name: Launch 7 Parallel Story Sub-Workflows
         env:

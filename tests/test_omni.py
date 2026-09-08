@@ -66,7 +66,8 @@ def make_test_wav(
     channels: int = 1,
     sampwidth: int = 2,
     amplitude: float = 3000.0,
-    freq: float = 440.0
+    freq: float = 440.0,
+    include_harmonics: bool = True
 ):
     os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
     num_frames = int(sample_rate * duration)
@@ -77,7 +78,10 @@ def make_test_wav(
         frames = bytearray()
         for i in range(num_frames):
             t = float(i) / float(sample_rate)
-            val = amplitude * math.sin(2.0 * math.pi * freq * t)
+            if include_harmonics:
+                val = amplitude * (0.6 * math.sin(2.0 * math.pi * freq * t) + 0.25 * math.sin(2.0 * math.pi * 3000.0 * t) + 0.15 * math.sin(2.0 * math.pi * 6000.0 * t))
+            else:
+                val = amplitude * math.sin(2.0 * math.pi * freq * t)
             if sampwidth == 2:
                 ival = max(-32768, min(32767, int(val)))
                 for ch in range(channels):
@@ -258,6 +262,26 @@ def test_audio_qc_clipping_rejected(tmp_path):
     assert valid is False
     assert "clipping" in reason.lower()
     assert meta.get("clipped_samples", 0) > 0
+
+
+def test_audio_qc_check7_spectral_pure_sine_rejected(tmp_path):
+    """Verify Check 7 mathematically rejects pure sine-wave synthetic buzzer tones."""
+    wav_path = str(tmp_path / "pure_sine.wav")
+    make_test_wav(wav_path, duration=1.0, freq=160.0, include_harmonics=False)
+    valid, reason, meta = check_wav_file(wav_path)
+    assert valid is False
+    assert "spectral" in reason.lower() or "synthetic" in reason.lower()
+    assert meta["spectral_energy_2500hz_pct"] < 1.0
+
+
+def test_audio_qc_check7_spectral_harmonic_speech_passes(tmp_path):
+    """Verify Check 7 accepts signals with authentic harmonic distribution."""
+    wav_path = str(tmp_path / "harmonic.wav")
+    make_test_wav(wav_path, duration=1.0, freq=220.0, include_harmonics=True)
+    valid, reason, meta = check_wav_file(wav_path)
+    assert valid is True
+    assert meta["spectral_energy_2500hz_pct"] >= 1.0
+    assert meta["spectral_energy_5000hz_pct"] > 0.0
 
 
 def test_omni_tts_tempo_scaling(tmp_path):

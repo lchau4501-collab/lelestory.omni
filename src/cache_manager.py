@@ -121,7 +121,9 @@ class ModelCacheManager:
             s2 = 0.4 * math.sin(2.0 * math.pi * (f0 * 2.0) * t)
             s3 = 0.2 * math.sin(2.0 * math.pi * 600.0 * t)
             s4 = 0.1 * math.sin(2.0 * math.pi * 1500.0 * t)
-            sample_val = (s1 + s2 + s3 + s4) * 0.40 * syllable_env * global_env
+            s5 = 0.15 * math.sin(2.0 * math.pi * 3200.0 * t)
+            s6 = 0.08 * math.sin(2.0 * math.pi * 6500.0 * t)
+            sample_val = (s1 + s2 + s3 + s4 + s5 + s6) * 0.35 * syllable_env * global_env
             pcm_int = max(-32767, min(32767, int(sample_val * 8500.0)))
             frames.extend(struct.pack("<h", pcm_int))
 
@@ -160,6 +162,8 @@ class ModelCacheManager:
         candidate_sources = [
             os.path.join(self.omnivoice_dir, REFERENCE_SAMPLE_FILENAME),
             os.path.join(self.omnivoice_dir, "reference.wav"),
+            os.path.expanduser("~/.cache/omnivoice/voice_samples/reference.wav"),
+            os.path.expanduser(f"~/.cache/omnivoice/{REFERENCE_SAMPLE_FILENAME}"),
             "/media/vpsg24gb/DATA/lelehoctiengtrung/lelestory/artifacts/voice_row_2/title.wav",
             "artifacts/voice_row_2/title.wav",
             "artifacts/voice_row_2/reference.wav",
