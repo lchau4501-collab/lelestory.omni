@@ -200,24 +200,50 @@ def _synthesize_neural_sherpa(
                     gen_config = sherpa_onnx.GenerationConfig()
                     gen_config.num_steps = 4
 
-                    # Ensure reference audio is loaded (check pinned cache if omitted)
+                    # Ensure reference audio is loaded (check pinned cache or assets if omitted)
                     ref_path = reference_wav_path
                     if not ref_path or not os.path.isfile(ref_path):
-                        pinned_ref = os.path.expanduser("~/.cache/omnivoice/voice_samples/reference.wav")
-                        if os.path.isfile(pinned_ref):
-                            ref_path = pinned_ref
+                        candidates = [
+                            os.path.expanduser("~/.cache/omnivoice/voice_samples/reference.wav"),
+                            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "reference.wav"),
+                            "assets/reference.wav",
+                            os.path.expanduser("~/.cache/omnivoice/Vegetarian Wolf.wav"),
+                        ]
+                        for c in candidates:
+                            if os.path.isfile(c):
+                                ref_path = c
+                                break
 
-                    if ref_path and os.path.isfile(ref_path):
-                        ref_audio, ref_sr = sf.read(ref_path, dtype="float32")
-                        if ref_audio.ndim > 1:
-                            ref_audio = ref_audio[:, 0]
-                        gen_config.reference_audio = ref_audio
-                        gen_config.reference_sample_rate = int(ref_sr) if ref_sr > 0 else SAMPLE_RATE
-                        gen_config.reference_text = "吃菜的大狼"
-                    else:
-                        gen_config.reference_sample_rate = SAMPLE_RATE
-                        gen_config.reference_text = "吃菜的大狼"
+                    if not ref_path or not os.path.isfile(ref_path):
+                        raise RuntimeError(
+                            "Reference voice sample missing. Synthetic fallbacks are strictly prohibited."
+                        )
 
+                    ref_audio, ref_sr = sf.read(ref_path, dtype="float32")
+                    if ref_audio.ndim > 1:
+                        ref_audio = ref_audio[:, 0]
+                    gen_config.reference_audio = ref_audio
+                    gen_config.reference_sample_rate = int(ref_sr) if ref_sr > 0 else SAMPLE_RATE
+
+                    # Load matching reference transcript
+                    ref_txt_candidates = [
+                        os.path.splitext(ref_path)[0] + ".txt",
+                        os.path.join(os.path.dirname(ref_path), "reference.txt"),
+                        os.path.expanduser("~/.cache/omnivoice/voice_samples/reference.txt"),
+                        "assets/reference.txt",
+                    ]
+                    ref_text = None
+                    for txt_p in ref_txt_candidates:
+                        if os.path.isfile(txt_p):
+                            with open(txt_p, "r", encoding="utf-8") as tf:
+                                t = tf.read().strip()
+                                if t:
+                                    ref_text = t
+                                    break
+                    if not ref_text:
+                        ref_text = "黑哥走到了山上，对山羊们说，我只吃菜，你们可以安心，"
+                    gen_config.reference_text = ref_text
+                    logger.info(f"Using ZipVoice reference audio: {ref_path} with matching transcript: {ref_text}")
                     audio = tts.generate(text, gen_config)
                     if len(audio.samples) > 0:
                         samples = np.array(audio.samples, dtype=np.float32)

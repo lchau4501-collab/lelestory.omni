@@ -2,15 +2,13 @@
 OmniVoice (k2-fsa) Model Cache Manager for LeLe Storybook Video Engine.
 Manages downloading, verifying, and maintaining genuine OmniVoice and k2-fsa sherpa-onnx model checkpoints
 in ~/.cache/omnivoice and ~/.cache/k2-fsa, including pinning reference voice sample (Vegetarian Wolf.wav)
-in ~/.cache/omnivoice/voice_samples/reference.wav.
+in ~/.cache/omnivoice/voice_samples/reference.wav with exact spoken transcript in reference.txt.
 """
 
 import os
 import tarfile
 import json
 import wave
-import struct
-import math
 import shutil
 import logging
 import urllib.request
@@ -22,9 +20,11 @@ OMNIVOICE_CACHE_DIR = os.path.expanduser("~/.cache/omnivoice")
 K2FSA_CACHE_DIR = os.path.expanduser("~/.cache/k2-fsa")
 VOICE_SAMPLES_CACHE_DIR = os.path.join(OMNIVOICE_CACHE_DIR, "voice_samples")
 PINNED_VOICE_SAMPLE_PATH = os.path.join(VOICE_SAMPLES_CACHE_DIR, "reference.wav")
+PINNED_VOICE_TEXT_PATH = os.path.join(VOICE_SAMPLES_CACHE_DIR, "reference.txt")
 
 REFERENCE_GDRIVE_FILE_ID = "1DpUPJQx-s41jJ25I0PE8HbfVW_DPXHEX"
 REFERENCE_SAMPLE_FILENAME = "Vegetarian Wolf.wav"
+REFERENCE_TRANSCRIPT = "黑哥走到了山上，对山羊们说，我只吃菜，你们可以安心，"
 
 # Authoritative upstream model checkpoint URLs from k2-fsa releases
 ZIPVOICE_MODEL_TAR_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-zipvoice-distill-int8-zh-en-emilia.tar.bz2"
@@ -59,6 +59,7 @@ class ModelCacheManager:
         self.cache_dir = self.omnivoice_dir  # backward compatibility
         self.voice_samples_dir = os.path.join(self.omnivoice_dir, "voice_samples")
         self.pinned_sample_path = os.path.join(self.voice_samples_dir, "reference.wav")
+        self.pinned_text_path = os.path.join(self.voice_samples_dir, "reference.txt")
 
         self.zipvoice_dir = os.path.join(self.k2fsa_dir, "zipvoice")
         self.vocoder_path = os.path.join(self.k2fsa_dir, "vocos_24khz.onnx")
@@ -98,41 +99,34 @@ class ModelCacheManager:
             return False
 
     @staticmethod
-    def _generate_reference_speech_wav(filepath: str, duration: float = 2.2) -> str:
-        """Synthesizes valid 24kHz mono 16-bit PCM reference speech WAV with natural harmonic acoustic profile."""
-        os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
-        sr = 24000
-        n_frames = int(sr * duration)
-        frames = bytearray()
-        base_f0 = 160.0
-        syllable_rate = 3.5
+    def _resample_to_24k_mono(input_path: str, output_path: str, max_duration: float = 9.98) -> bool:
+        """Converts reference audio to 24kHz mono PCM 16-bit matching exact spoken duration."""
+        try:
+            import soundfile as sf
+            import numpy as np
+            import scipy.signal
 
-        for i in range(n_frames):
-            t = float(i) / float(sr)
-            syllable_env = max(0.2, math.sin(2.0 * math.pi * syllable_rate * t) ** 2)
-            fade = int(0.05 * sr)
-            global_env = 1.0
-            if i < fade:
-                global_env = float(i) / float(fade)
-            elif i > n_frames - fade:
-                global_env = float(n_frames - i) / float(fade)
-            f0 = base_f0 + 20.0 * math.sin(2.0 * math.pi * 1.5 * t)
-            s1 = math.sin(2.0 * math.pi * f0 * t)
-            s2 = 0.4 * math.sin(2.0 * math.pi * (f0 * 2.0) * t)
-            s3 = 0.2 * math.sin(2.0 * math.pi * 600.0 * t)
-            s4 = 0.1 * math.sin(2.0 * math.pi * 1500.0 * t)
-            s5 = 0.15 * math.sin(2.0 * math.pi * 3200.0 * t)
-            s6 = 0.08 * math.sin(2.0 * math.pi * 6500.0 * t)
-            sample_val = (s1 + s2 + s3 + s4 + s5 + s6) * 0.35 * syllable_env * global_env
-            pcm_int = max(-32767, min(32767, int(sample_val * 8500.0)))
-            frames.extend(struct.pack("<h", pcm_int))
+            data, sr = sf.read(input_path)
+            if data.ndim > 1:
+                data = data.mean(axis=1)
 
-        with wave.open(filepath, "wb") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(sr)
-            wf.writeframes(frames)
-        return filepath
+            if max_duration > 0 and len(data) > int(max_duration * sr):
+                data = data[:int(max_duration * sr)]
+
+            target_sr = 24000
+            num_samples = int(len(data) * target_sr / sr)
+            resampled = scipy.signal.resample(data, num_samples)
+
+            peak = np.max(np.abs(resampled))
+            if peak > 0:
+                resampled = (resampled / peak) * 0.9
+
+            os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+            sf.write(output_path, resampled.astype(np.float32), target_sr, subtype="PCM_16")
+            return os.path.isfile(output_path) and os.path.getsize(output_path) > 10000
+        except Exception as e:
+            logger.warning(f"Error resampling audio {input_path} to 24kHz mono: {e}")
+            return False
 
     def ensure_voice_sample_cached(
         self,
@@ -140,73 +134,97 @@ class ModelCacheManager:
         target_path: Optional[str] = None
     ) -> str:
         """
-        Ensures reference voice sample is permanently pinned in ~/.cache/omnivoice/voice_samples/reference.wav.
-        1. Checks cache path first. If present and valid (24kHz mono 16-bit WAV), uses immediately.
-        2. If missing, attempts to copy from local artifacts or download from Google Drive.
-        3. Generates 24kHz acoustic reference speech audio if no upstream file is accessible.
-        4. Verifies 24,000 Hz mono 16-bit PCM format before returning.
+        Ensures authentic reference voice sample is permanently pinned in ~/.cache/omnivoice/voice_samples/reference.wav
+        along with its matching transcript in reference.txt.
+        Strictly forbids synthetic tone fallbacks.
         """
         os.makedirs(self.voice_samples_dir, exist_ok=True)
         dest_path = target_path or self.pinned_sample_path
+        txt_path = dest_path.replace(".wav", ".txt")
 
-        if self._is_valid_pcm_wav(dest_path):
+        # 1. If destination file is already valid and > 50KB, ensure transcript and return
+        if self._is_valid_pcm_wav(dest_path) and os.path.getsize(dest_path) > 50000:
+            if not os.path.isfile(txt_path):
+                with open(txt_path, "w", encoding="utf-8") as f:
+                    f.write(REFERENCE_TRANSCRIPT)
             logger.info(f"Pinned reference voice sample verified in cache: {dest_path}")
-            named_alias = os.path.join(self.omnivoice_dir, REFERENCE_SAMPLE_FILENAME)
-            if not os.path.exists(named_alias):
-                try:
-                    shutil.copyfile(dest_path, named_alias)
-                except Exception:
-                    pass
             return dest_path
 
+        # 2. Check candidate local authentic sources
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         candidate_sources = [
+            os.path.join(repo_root, "assets", "reference.wav"),
+            "assets/reference.wav",
+            os.path.join(self.voice_samples_dir, "Vegetarian Wolf.wav"),
             os.path.join(self.omnivoice_dir, REFERENCE_SAMPLE_FILENAME),
-            os.path.join(self.omnivoice_dir, "reference.wav"),
-            os.path.expanduser("~/.cache/omnivoice/voice_samples/reference.wav"),
+            os.path.expanduser(f"~/.cache/omnivoice/voice_samples/reference.wav"),
             os.path.expanduser(f"~/.cache/omnivoice/{REFERENCE_SAMPLE_FILENAME}"),
-            "/media/vpsg24gb/DATA/lelehoctiengtrung/lelestory/artifacts/voice_row_2/title.wav",
-            "artifacts/voice_row_2/title.wav",
-            "artifacts/voice_row_2/reference.wav",
+            "/tmp/real_vegetarian_wolf.wav",
+            "/tmp/Vegetarian Wolf.wav",
         ]
+
         for cand in candidate_sources:
-            if self._is_valid_pcm_wav(cand):
-                logger.info(f"Copying reference voice sample from source: {cand} -> {dest_path}")
-                shutil.copyfile(cand, dest_path)
-                named_alias = os.path.join(self.omnivoice_dir, REFERENCE_SAMPLE_FILENAME)
-                if not os.path.exists(named_alias):
-                    try:
-                        shutil.copyfile(dest_path, named_alias)
-                    except Exception:
-                        pass
+            if os.path.isfile(cand) and os.path.getsize(cand) > 50000:
+                logger.info(f"Processing authentic reference voice sample from: {cand}")
+                if self._is_valid_pcm_wav(cand):
+                    shutil.copyfile(cand, dest_path)
+                else:
+                    self._resample_to_24k_mono(cand, dest_path, max_duration=9.98)
+
+                if self._is_valid_pcm_wav(dest_path):
+                    cand_txt = cand.replace(".wav", ".txt")
+                    if os.path.isfile(cand_txt):
+                        shutil.copyfile(cand_txt, txt_path)
+                    else:
+                        with open(txt_path, "w", encoding="utf-8") as f:
+                            f.write(REFERENCE_TRANSCRIPT)
+                    logger.info(f"Successfully pinned reference voice sample to {dest_path}")
+                    return dest_path
+
+        # 3. Download directly from Google Drive API using Service Account credentials
+        logger.info(f"Attempting authenticated download of {REFERENCE_SAMPLE_FILENAME} (ID: {gdrive_file_id})...")
+        downloaded = False
+        raw_download_path = os.path.join(self.voice_samples_dir, REFERENCE_SAMPLE_FILENAME)
+        try:
+            from drive_resolver import get_service_account_credentials, get_drive_auth_headers
+            import requests
+
+            creds = get_service_account_credentials()
+            if creds:
+                headers = get_drive_auth_headers(creds)
+                url = f"https://www.googleapis.com/drive/v3/files/{gdrive_file_id}?alt=media"
+                resp = requests.get(url, headers=headers, stream=True, timeout=60)
+                if resp.status_code == 200:
+                    with open(raw_download_path, "wb") as f:
+                        for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                            if chunk:
+                                f.write(chunk)
+                    if os.path.isfile(raw_download_path) and os.path.getsize(raw_download_path) > 1000000:
+                        downloaded = True
+                        logger.info(f"Successfully downloaded authentic voice sample ({os.path.getsize(raw_download_path)} bytes)")
+        except Exception as e:
+            logger.warning(f"Google Drive API download failed: {e}")
+
+        if downloaded and os.path.isfile(raw_download_path):
+            self._resample_to_24k_mono(raw_download_path, dest_path, max_duration=9.98)
+            with open(txt_path, "w", encoding="utf-8") as f:
+                f.write(REFERENCE_TRANSCRIPT)
+            if self._is_valid_pcm_wav(dest_path):
                 return dest_path
 
-        # Direct Google Drive download attempt
-        download_success = False
-        try:
-            import requests
-            url = f"https://drive.google.com/uc?export=download&id={gdrive_file_id}"
-            resp = requests.get(url, timeout=10)
-            if resp.status_code == 200 and len(resp.content) > 1000:
-                with open(dest_path, "wb") as f:
-                    f.write(resp.content)
-                if self._is_valid_pcm_wav(dest_path):
-                    download_success = True
-                    logger.info(f"Downloaded reference voice sample from Google Drive to {dest_path}")
-        except Exception as exc:
-            logger.warning(f"Direct GDrive download skipped or failed: {exc}")
+        # 4. Fallback to repo asset if available
+        repo_asset = os.path.join(repo_root, "assets", "reference.wav")
+        if os.path.isfile(repo_asset) and self._is_valid_pcm_wav(repo_asset):
+            shutil.copyfile(repo_asset, dest_path)
+            with open(txt_path, "w", encoding="utf-8") as f:
+                f.write(REFERENCE_TRANSCRIPT)
+            return dest_path
 
-        if not download_success or not self._is_valid_pcm_wav(dest_path):
-            logger.info(f"Synthesizing 24kHz reference voice sample to {dest_path}")
-            self._generate_reference_speech_wav(dest_path, duration=2.2)
-
-        named_alias = os.path.join(self.omnivoice_dir, REFERENCE_SAMPLE_FILENAME)
-        try:
-            shutil.copyfile(dest_path, named_alias)
-        except Exception:
-            pass
-
-        logger.info(f"Reference voice sample pinned successfully at {dest_path}")
-        return dest_path
+        # 5. Strict fail-fast: NEVER generate fake sine wave
+        raise RuntimeError(
+            "CRITICAL: Failed to acquire authentic reference voice sample. "
+            "Synthetic tone facades are strictly prohibited by engine standards."
+        )
 
     def _download_file(self, url: str, dest_path: str, min_size: int = 1000) -> bool:
         """Helper to download a file with streaming to handle large ONNX models."""
@@ -233,26 +251,38 @@ class ModelCacheManager:
 
         # 1. Ensure Vocos 24kHz vocoder
         vocoder_ready = os.path.isfile(self.vocoder_path) and os.path.getsize(self.vocoder_path) > 1000000
-        if not vocoder_ready and download_if_missing:
+        if not vocoder_ready:
             # Check local candidate paths first
-            local_vocoder = "/tmp/vocos_24khz.onnx"
-            if os.path.isfile(local_vocoder) and os.path.getsize(local_vocoder) > 1000000:
-                shutil.copyfile(local_vocoder, self.vocoder_path)
-                vocoder_ready = True
-            else:
+            candidates = [
+                os.path.expanduser("~/.cache/k2-fsa/vocos_24khz.onnx"),
+                "/tmp/vocos_24khz.onnx",
+            ]
+            for cand in candidates:
+                if os.path.isfile(cand) and os.path.getsize(cand) > 10000000:
+                    shutil.copyfile(cand, self.vocoder_path)
+                    vocoder_ready = True
+                    break
+
+            if not vocoder_ready and download_if_missing:
                 vocoder_ready = self._download_file(VOCODER_24KHZ_URL, self.vocoder_path, min_size=10000000)
 
         # 2. Ensure ZipVoice zero-shot neural model
         decoder_file = os.path.join(self.zipvoice_dir, "decoder.int8.onnx")
         zipvoice_ready = os.path.isfile(decoder_file) and os.path.getsize(decoder_file) > 10000000
-        if not zipvoice_ready and download_if_missing:
-            local_zip_dir = "/tmp/sherpa-onnx-zipvoice-distill-int8-zh-en-emilia"
-            if os.path.isdir(local_zip_dir) and os.path.isfile(os.path.join(local_zip_dir, "decoder.int8.onnx")):
-                if os.path.exists(self.zipvoice_dir):
-                    shutil.rmtree(self.zipvoice_dir)
-                shutil.copytree(local_zip_dir, self.zipvoice_dir)
-                zipvoice_ready = True
-            else:
+        if not zipvoice_ready:
+            local_candidates = [
+                os.path.expanduser("~/.cache/k2-fsa/zipvoice"),
+                "/tmp/sherpa-onnx-zipvoice-distill-int8-zh-en-emilia",
+            ]
+            for ldir in local_candidates:
+                if os.path.isdir(ldir) and os.path.isfile(os.path.join(ldir, "decoder.int8.onnx")):
+                    if os.path.exists(self.zipvoice_dir):
+                        shutil.rmtree(self.zipvoice_dir)
+                    shutil.copytree(ldir, self.zipvoice_dir)
+                    zipvoice_ready = True
+                    break
+
+            if not zipvoice_ready and download_if_missing:
                 tar_tmp = os.path.join(self.k2fsa_dir, "zipvoice_model.tar.bz2")
                 if self._download_file(ZIPVOICE_MODEL_TAR_URL, tar_tmp, min_size=50000000):
                     try:

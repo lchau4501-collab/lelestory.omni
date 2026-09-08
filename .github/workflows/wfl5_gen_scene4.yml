@@ -30,9 +30,9 @@ jobs:
           path: |
             ~/.cache/omnivoice
             ~/.cache/k2-fsa
-          key: omnivoice-k2fsa-models-v2
+          key: omnivoice-k2fsa-models-v3
           restore-keys: |
-            omnivoice-k2fsa-models-v2
+            omnivoice-k2fsa-models-v3
             omnivoice-k2fsa-model-
 
       - name: Install Dependencies

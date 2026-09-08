@@ -70,7 +70,14 @@ if ref_audio.ndim > 1:
     ref_audio = ref_audio[:, 0]
 gen_config.reference_audio = ref_audio
 gen_config.reference_sample_rate = int(ref_sr)
-gen_config.reference_text = "吃菜的大狼"
+ref_txt_path = ref_wav.replace(".wav", ".txt")
+if os.path.isfile(ref_txt_path):
+    with open(ref_txt_path, "r", encoding="utf-8") as f:
+        ref_text = f.read().strip()
+else:
+    ref_text = "黑哥走到了山上，对山羊们说，我只吃菜，你们可以安心，"
+gen_config.reference_text = ref_text
+print(f"✓ Using reference text: {ref_text}")
 
 audio = tts.generate("测试", gen_config)
 if len(audio.samples) == 0:
