@@ -63,7 +63,7 @@ if not tts_config.validate():
 
 tts = sherpa_onnx.OfflineTts(tts_config)
 gen_config = sherpa_onnx.GenerationConfig()
-gen_config.num_steps = 4
+gen_config.num_steps = 10
 
 ref_audio, ref_sr = sf.read(ref_wav, dtype="float32")
 if ref_audio.ndim > 1:
@@ -75,7 +75,7 @@ if os.path.isfile(ref_txt_path):
     with open(ref_txt_path, "r", encoding="utf-8") as f:
         ref_text = f.read().strip()
 else:
-    ref_text = "痛苦的根源是你高估了关系，低估了人性，曾经把一段情意当成一辈子的归宿，"
+    ref_text = "不求与人相比，但求超越自己。"
 gen_config.reference_text = ref_text
 print(f"✓ Using reference text: {ref_text}")
 

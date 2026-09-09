@@ -24,8 +24,8 @@ PINNED_VOICE_TEXT_PATH = os.path.join(VOICE_SAMPLES_CACHE_DIR, "reference.txt")
 
 # Legacy GDrive file ID permanently eradicated per user policy
 REFERENCE_GDRIVE_FILE_ID = ""
-REFERENCE_SAMPLE_FILENAME = "ManVoice.mp3"
-REFERENCE_TRANSCRIPT = "痛苦的根源是你高估了关系，低估了人性，曾经把一段情意当成一辈子的归宿，"
+REFERENCE_SAMPLE_FILENAME = "voice_preview_mark - cartoonish, funny and cheerful.mp3"
+REFERENCE_TRANSCRIPT = "不求与人相比，但求超越自己。"
 
 # Authoritative upstream model checkpoint URLs from k2-fsa releases
 ZIPVOICE_MODEL_TAR_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-zipvoice-distill-int8-zh-en-emilia.tar.bz2"
@@ -157,6 +157,7 @@ class ModelCacheManager:
             os.path.join(repo_root, "assets", "reference.wav"),
             "assets/reference.wav",
             os.path.join(repo_root, "assets", "ManVoice.mp3"),
+            "assets/voice_preview_mark - cartoonish, funny and cheerful.mp3",
             "assets/ManVoice.mp3",
             os.path.join(self.voice_samples_dir, "ManVoice.mp3"),
             os.path.join(self.omnivoice_dir, REFERENCE_SAMPLE_FILENAME),

@@ -308,7 +308,7 @@ def test_strip_punctuation():
 def test_omni_tts_reference_voice_spec():
     engine = OmniVoiceEngine()
     assert engine.sample_id in ["", "1DpUPJQx-s41jJ25I0PE8HbfVW_DPXHEX"]
-    assert engine.reference_name in ["ManVoice.mp3", "Vegetarian WolfZ.wav", "Vegetarian Wolf.wav"]
+    assert engine.reference_name in ["voice_preview_mark - cartoonish, funny and cheerful.mp3", "ManVoice.mp3", "Vegetarian WolfZ.wav", "Vegetarian Wolf.wav"]
 
 
 def test_omni_tts_script_texts():

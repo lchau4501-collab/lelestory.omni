@@ -1,7 +1,7 @@
 """
 OmniVoice (k2-fsa) Neural Voice Cloning Engine for LeLe Storybook Video Engine.
 Synthesizes authentic Chinese story audio sections using sherpa-onnx neural zero-shot voice cloning
-matching the reference voice ManVoice.mp3.
+matching the reference voice voice_preview_mark - cartoonish, funny and cheerful.mp3.
 Strictly 24,000 Hz, mono, 16-bit PCM WAV output. Strictly ZERO Edge-TTS. Zero sine-wave synthesizer facade.
 Prioritizes loading pinned reference voice sample from ~/.cache/omnivoice/voice_samples/reference.wav.
 Supports native 1.0x speech tempo without time-stretching degradation while preserving pitch, tone, and vocal timbre.
@@ -30,7 +30,7 @@ SAMPWIDTH = 2  # 16-bit PCM
 
 # Legacy GDrive ID eradicated per user policy
 REFERENCE_SAMPLE_ID = ""  # Legacy ID 1DpUPJQx-s41jJ25I0PE8HbfVW_DPXHEX superseded by ManVoice.mp3
-REFERENCE_SAMPLE_FILENAME = "ManVoice.mp3"
+REFERENCE_SAMPLE_FILENAME = "voice_preview_mark - cartoonish, funny and cheerful.mp3"
 
 OUTRO_LOOP_TEXT_EXACT = "这些生词来自故事……"
 
@@ -199,7 +199,7 @@ def _synthesize_neural_sherpa(
                 if tts_config.validate():
                     tts = sherpa_onnx.OfflineTts(tts_config)
                     gen_config = sherpa_onnx.GenerationConfig()
-                    gen_config.num_steps = 4
+                    gen_config.num_steps = 10
 
                     # Ensure reference audio is loaded (check pinned cache or assets if omitted)
                     ref_path = reference_wav_path
@@ -210,6 +210,7 @@ def _synthesize_neural_sherpa(
                             "assets/reference.wav",
                             os.path.expanduser("~/.cache/omnivoice/ManVoice.mp3"),
                             os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "ManVoice.mp3"),
+                            "assets/voice_preview_mark - cartoonish, funny and cheerful.mp3",
                             "assets/ManVoice.mp3",
                         ]
                         for c in candidates:
@@ -244,7 +245,7 @@ def _synthesize_neural_sherpa(
                                     ref_text = t
                                     break
                     if not ref_text:
-                        ref_text = "痛苦的根源是你高估了关系，低估了人性，曾经把一段情意当成一辈子的归宿，"
+                        ref_text = "不求与人相比，但求超越自己。"
                     gen_config.reference_text = ref_text
                     logger.info(f"Using ZipVoice reference audio: {ref_path} with matching transcript: {ref_text}")
                     audio = tts.generate(text, gen_config)
