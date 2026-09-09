@@ -40,10 +40,10 @@ cp -f "${K2FSA_DIR}/zipvoice/encoder.int8.onnx" "${OMNI_DIR}/reference_encoder.o
 cp -f "${K2FSA_DIR}/zipvoice/tokens.txt" "${K2FSA_DIR}/tokens.txt"
 
 # 3. Seed repository assets first if present
-if [ -f "assets/Vegetarian WolfZ.wav" ]; then
-  cp -f "assets/Vegetarian WolfZ.wav" "${VOICE_SAMPLES_DIR}/Vegetarian WolfZ.wav"
-  cp -f "assets/Vegetarian WolfZ.wav" "${OMNI_DIR}/Vegetarian WolfZ.wav"
-  echo "✓ Seeded Vegetarian WolfZ.wav into cache."
+if [ -f "assets/ManVoice.mp3" ]; then
+  cp -f "assets/ManVoice.mp3" "${VOICE_SAMPLES_DIR}/ManVoice.mp3"
+  cp -f "assets/ManVoice.mp3" "${OMNI_DIR}/ManVoice.mp3"
+  echo "✓ Seeded ManVoice.mp3 into cache."
 fi
 if [ -f "assets/reference.wav" ]; then
   cp -f "assets/reference.wav" "${VOICE_SAMPLES_DIR}/reference.wav"

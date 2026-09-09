@@ -75,7 +75,7 @@ if os.path.isfile(ref_txt_path):
     with open(ref_txt_path, "r", encoding="utf-8") as f:
         ref_text = f.read().strip()
 else:
-    ref_text = "我只吃菜，你们可以安心，我不会吃你们的，"
+    ref_text = "痛苦的根源是你高估了关系，低估了人性，曾经把一段情意当成一辈子的归宿，"
 gen_config.reference_text = ref_text
 print(f"✓ Using reference text: {ref_text}")
 
