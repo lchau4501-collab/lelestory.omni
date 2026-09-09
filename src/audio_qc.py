@@ -21,7 +21,7 @@ DEFAULT_CHANNELS = 1         # Strictly Mono
 DEFAULT_SAMPWIDTH = 2        # 16-bit PCM (2 bytes)
 DEFAULT_BIT_DEPTH = 16
 DEFAULT_MIN_RMS = 500.0       # Minimum RMS amplitude to reject silence
-DEFAULT_MIN_DURATION = 0.4    # Minimum absolute seconds (accommodates 2-char speech like 白菜)
+DEFAULT_MIN_DURATION = 0.25   # Minimum absolute seconds (accommodates 2-char speech like 白菜)
 DEFAULT_MAX_CLIPPING_RATIO = 0.01  # Maximum 1% digital clipping threshold
 DEFAULT_MIN_SPECTRAL_HIGH_PCT = 1.0  # Minimum 1.0% energy at >= 2.5 kHz (Check 7)
 

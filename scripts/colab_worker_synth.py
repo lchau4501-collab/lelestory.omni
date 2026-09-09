@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
 Colab Remote Voice Synthesis Worker for LeLe Storybook Video Engine.
-Executes directly inside Google Colab VM with CUDA GPU accelerator (T4/L4) or high-speed CPU.
-Synthesizes authentic Chinese story audio sections using sherpa-onnx ZipVoice zero-shot cloning
-at 24kHz mono PCM 16-bit with num_steps=10 for maximum spectral fidelity and zero distortion.
+Executes directly inside Google Colab VM with NVIDIA CUDA GPU accelerator (Tesla T4/L4/A100).
+Synthesizes authentic Chinese story audio sections using official k2-fsa/OmniVoice
+zero-shot neural voice cloning at 24,000 Hz mono PCM 16-bit.
+Uses speed=0.85 (15% reduction) for deliberate, natural pacing and zero distortion.
 """
 
 import os
@@ -13,64 +14,64 @@ import time
 import glob
 import shutil
 import tarfile
-import urllib.request
+import argparse
 import subprocess
 from pathlib import Path
 
-print("🚀 [Colab Worker] Starting Voice Synthesis on Google Colab VM...")
+print("🚀 [Colab Worker] Starting Official k2-fsa/OmniVoice Voice Synthesis on Google Colab VM...", flush=True)
 
-# 1. Ensure dependencies installed
+# 1. Ensure official k2-fsa/OmniVoice and soundfile are installed
 try:
-    import sherpa_onnx
+    import torch
+    import omnivoice
+    from omnivoice import OmniVoice
     import soundfile as sf
     import numpy as np
-    print("✓ Dependencies already installed.")
+    print("✓ Official OmniVoice and dependencies already installed.", flush=True)
 except ImportError:
-    print("📦 Installing sherpa-onnx, soundfile, numpy via pip...")
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "sherpa-onnx", "soundfile", "numpy"], check=True)
-    import sherpa_onnx
+    print("📦 Installing official k2-fsa/OmniVoice and soundfile via pip...", flush=True)
+    cmd = [sys.executable, "-m", "pip", "install", "-q", "omnivoice", "soundfile"]
+    res = subprocess.run(cmd)
+    if res.returncode != 0:
+        print("⚠️ Standard PyPI install failed, attempting git repository install...", flush=True)
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-q", "git+https://github.com/k2-fsa/OmniVoice.git", "soundfile"],
+            check=True
+        )
+    import torch
+    import omnivoice
+    from omnivoice import OmniVoice
     import soundfile as sf
     import numpy as np
-    print("✓ Dependencies installed successfully.")
+    print("✓ Official OmniVoice installed successfully.", flush=True)
 
-# 2. Hardware Detection
-import torch
-device = "cuda" if torch.cuda.is_available() else "cpu"
-gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "N/A"
-print(f"⚡ Hardware Accelerator: {device.upper()} ({gpu_name})")
+# 2. Hardware Enforcement (Strict CUDA GPU Check)
+if not torch.cuda.is_available():
+    raise RuntimeError(
+        "❌ CUDA GPU is NOT available on this Colab VM! "
+        "OmniVoice neural synthesis strictly requires NVIDIA GPU acceleration (Tesla T4/L4/A100). "
+        "CPU execution is forbidden per policy."
+    )
 
-# 3. Model weights setup
-MODELS_DIR = Path("/content/models")
-MODELS_DIR.mkdir(parents=True, exist_ok=True)
+device = "cuda:0"
+dtype = torch.float16
+gpu_name = torch.cuda.get_device_name(0)
+gpu_mem = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+print(f"⚡ Hardware Accelerator: {device} ({gpu_name}, {gpu_mem:.2f} GB VRAM) | Precision: {dtype}", flush=True)
 
-VOCODER_PATH = MODELS_DIR / "vocos_24khz.onnx"
-ZIPVOICE_DIR = MODELS_DIR / "zipvoice"
+# 3. Load official k2-fsa/OmniVoice Model
+print("📥 Loading official k2-fsa/OmniVoice model from Hugging Face Hub (load_asr=False)...", flush=True)
+t_model_start = time.time()
+model = OmniVoice.from_pretrained(
+    "k2-fsa/OmniVoice",
+    device_map=device,
+    dtype=dtype,
+    load_asr=False
+)
+model_load_time = time.time() - t_model_start
+print(f"✓ OmniVoice model successfully loaded in {model_load_time:.2f}s.", flush=True)
 
-VOCODER_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/vocoder-models/vocos_24khz.onnx"
-ZIPVOICE_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-zipvoice-distill-int8-zh-en-emilia.tar.bz2"
-
-if not VOCODER_PATH.exists() or VOCODER_PATH.stat().st_size < 50000000:
-    print("📥 Downloading Vocos 24kHz vocoder (~54MB)...")
-    urllib.request.urlretrieve(VOCODER_URL, str(VOCODER_PATH))
-    print("✓ Vocoder downloaded.")
-
-if not (ZIPVOICE_DIR / "decoder.int8.onnx").exists():
-    print("📥 Downloading ZipVoice neural model archive (~109MB)...")
-    tar_path = "/tmp/zipvoice.tar.bz2"
-    urllib.request.urlretrieve(ZIPVOICE_URL, tar_path)
-    print("📦 Extracting ZipVoice archive...")
-    with tarfile.open(tar_path, "r:bz2") as tar:
-        tar.extractall(path=str(MODELS_DIR))
-    extracted = MODELS_DIR / "sherpa-onnx-zipvoice-distill-int8-zh-en-emilia"
-    if extracted.exists():
-        if ZIPVOICE_DIR.exists():
-            shutil.rmtree(ZIPVOICE_DIR)
-        extracted.rename(ZIPVOICE_DIR)
-    if os.path.exists(tar_path):
-        os.remove(tar_path)
-    print("✓ ZipVoice model ready.")
-
-# 4. Resilient Reference voice audio & transcript lookup
+# 4. Resilient Reference Voice Audio & Transcript Lookup
 ref_candidates = [
     Path("/content/reference.wav"),
     Path("/reference.wav"),
@@ -80,79 +81,71 @@ ref_candidates = [
 ]
 REF_WAV = None
 for c in ref_candidates:
-    if c.exists():
+    if c.exists() and c.stat().st_size > 0:
         REF_WAV = c
         break
 
 if not REF_WAV:
     matches = glob.glob("/**/reference.wav", recursive=True)
-    if matches:
-        REF_WAV = Path(matches[0])
+    for m in matches:
+        p = Path(m)
+        if p.exists() and p.stat().st_size > 0:
+            REF_WAV = p
+            break
 
 if not REF_WAV or not REF_WAV.exists():
     raise FileNotFoundError(f"Reference voice audio not found. Searched {ref_candidates} and filesystem.")
-
-ref_audio, ref_sr = sf.read(str(REF_WAV), dtype="float32")
-if ref_audio.ndim > 1:
-    ref_audio = ref_audio[:, 0]
 
 ref_txt_candidates = [
     Path("/content/reference.txt"),
     Path("/reference.txt"),
     Path("reference.txt"),
+    Path("/root/reference.txt"),
     REF_WAV.with_suffix(".txt")
 ]
 ref_text = "不求与人相比，但求超越自己。"
 for tc in ref_txt_candidates:
     if tc.exists():
-        with open(tc, "r", encoding="utf-8") as f:
-            t = f.read().strip()
-            if t:
-                ref_text = t
-                break
+        try:
+            with open(tc, "r", encoding="utf-8") as f:
+                t = f.read().strip()
+                if t:
+                    ref_text = t
+                    break
+        except Exception:
+            pass
 
-print(f"🎙️ Reference Voice ({REF_WAV}): {len(ref_audio)/ref_sr:.2f}s, SR={ref_sr}Hz | Transcript: '{ref_text}'")
+# Verify reference audio loadable
+ref_info = sf.info(str(REF_WAV))
+print(f"🎙️ Reference Voice ({REF_WAV}): {ref_info.duration:.2f}s, SR={ref_info.samplerate}Hz, Ch={ref_info.channels} | Transcript: '{ref_text}'", flush=True)
 
-# 5. Initialize TTS Engine
-print("🔧 Initializing sherpa-onnx OfflineTts...")
-tts_config = sherpa_onnx.OfflineTtsConfig(
-    model=sherpa_onnx.OfflineTtsModelConfig(
-        zipvoice=sherpa_onnx.OfflineTtsZipvoiceModelConfig(
-            tokens=str(ZIPVOICE_DIR / "tokens.txt"),
-            encoder=str(ZIPVOICE_DIR / "encoder.int8.onnx"),
-            decoder=str(ZIPVOICE_DIR / "decoder.int8.onnx"),
-            vocoder=str(VOCODER_PATH),
-            data_dir=str(ZIPVOICE_DIR / "espeak-ng-data"),
-            lexicon=str(ZIPVOICE_DIR / "lexicon.txt") if (ZIPVOICE_DIR / "lexicon.txt").exists() else "",
-        ),
-        debug=False,
-        num_threads=4,
-        provider="cpu",
-    )
+# 5. Pre-compute Reusable Voice Clone Prompt (Prevents Redundant Feature Extraction)
+print("🎯 Pre-computing reusable VoiceClonePrompt from reference audio and text...", flush=True)
+t_prompt_start = time.time()
+voice_prompt = model.create_voice_clone_prompt(
+    ref_audio=str(REF_WAV),
+    ref_text=ref_text,
+    preprocess_prompt=True
 )
+prompt_compute_time = time.time() - t_prompt_start
+print(f"✓ VoiceClonePrompt pre-computed in {prompt_compute_time:.2f}s.", flush=True)
 
-if not tts_config.validate():
-    raise RuntimeError("TTS configuration validation failed!")
+# 6. Job Manifest & Target Script Configuration
+parser = argparse.ArgumentParser(description="OmniVoice Colab Voice Synthesis Worker")
+parser.add_argument("--row-id", type=int, default=None, help="Story row ID")
+parser.add_argument("--speed", type=float, default=0.85, help="Speaking speed factor (default: 0.85)")
+args, _ = parser.parse_known_args()
 
-tts = sherpa_onnx.OfflineTts(tts_config)
-
-gen_config = sherpa_onnx.GenerationConfig()
-gen_config.num_steps = 10  # 10 Flow-matching steps for maximum smoothness
-gen_config.reference_audio = ref_audio
-gen_config.reference_sample_rate = int(ref_sr)
-gen_config.reference_text = ref_text
-gen_config.speed = 1.0
-gen_config.silence_scale = 0.2
-
-# 6. Read Story Script Manifest
 MANIFEST_PATH = Path("/content/job_manifest.json")
 if MANIFEST_PATH.exists():
     with open(MANIFEST_PATH, "r", encoding="utf-8") as f:
         manifest = json.load(f)
-    row_id = manifest.get("row_id", 2)
+    row_id = args.row_id if args.row_id is not None else manifest.get("row_id", 2)
     script_items = manifest.get("script_items", {})
+    target_speed = args.speed if args.speed != 0.85 else manifest.get("speed", 0.85)
 else:
-    row_id = 2
+    row_id = args.row_id if args.row_id is not None else 2
+    target_speed = args.speed
     script_items = {
         "title": "吃菜的大狼",
         "scene1": "深山里住着一只大灰狼，名叫罗罗。",
@@ -171,53 +164,91 @@ else:
 OUTPUT_DIR = Path(f"/content/voice_row_{row_id}")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-print(f"\n🎨 Synthesizing 12 story sections for Row #{row_id} (num_steps=10)...")
+print(f"\n🎨 Synthesizing {len(script_items)} story sections for Row #{row_id} with OmniVoice (speed={target_speed})...", flush=True)
 results = {}
 
+# 7. Synthesize Sections Sequentially
 for sec_name, text in script_items.items():
     out_file = OUTPUT_DIR / f"{sec_name}.wav"
     t0 = time.time()
-    audio = tts.generate(text, gen_config)
+    
+    # Generate speech with pre-computed voice prompt and target speed
+    audios = model.generate(
+        text=text,
+        voice_clone_prompt=voice_prompt,
+        speed=target_speed,
+        language="zh"
+    )
     elapsed = time.time() - t0
 
-    if len(audio.samples) == 0:
+    if not audios or len(audios) == 0 or len(audios[0]) == 0:
         raise RuntimeError(f"Zero samples generated for section: {sec_name}")
 
-    samples = np.array(audio.samples, dtype=np.float32)
+    samples = np.array(audios[0], dtype=np.float32)
+    
+    # Peak Normalization with 0.85 - 0.95 Safety Headroom (Target 0.90)
     peak = float(np.max(np.abs(samples)))
     if peak > 0:
-        samples = (samples / peak) * 0.85
+        target_headroom = 0.90
+        samples = (samples / peak) * target_headroom
+    else:
+        raise RuntimeError(f"Synthesized audio for section {sec_name} contains pure silence.")
 
-    sf.write(str(out_file), samples, samplerate=audio.sample_rate, subtype="PCM_16")
+    # Export to standard 24,000 Hz mono 16-bit Little-Endian PCM WAV
+    sf.write(str(out_file), samples, samplerate=model.sampling_rate, subtype="PCM_16")
 
-    rms = float(np.sqrt(np.mean(samples ** 2)) * 32768)
-    duration = len(samples) / audio.sample_rate
+    # Quality Metrics Calculation
+    duration = len(samples) / float(model.sampling_rate)
+    rms = float(np.sqrt(np.mean(samples ** 2)) * 32768.0)
+    peak_int = int(np.max(np.abs(samples * 32768.0)))
+    clipped_samples = int(np.sum(np.abs(samples * 32768.0) >= 32767))
+    clipping_ratio = float(clipped_samples / len(samples))
+
     results[sec_name] = {
-        "duration": duration,
-        "rms": rms,
+        "filename": f"{sec_name}.wav",
+        "duration": round(duration, 3),
+        "rms": round(rms, 2),
+        "peak": peak_int,
+        "clipping_ratio": clipping_ratio,
         "chars": len(text),
-        "synth_time_sec": elapsed
+        "synth_time_sec": round(elapsed, 3),
+        "speed": target_speed,
+        "sample_rate": model.sampling_rate,
+        "channels": 1,
+        "bit_depth": 16
     }
-    print(f"  ✓ {sec_name:<12} | {duration:5.2f}s | RMS: {rms:6.1f} | Chars: {len(text):2d} | Synth in {elapsed:4.2f}s | '{text}'")
+    print(f"  ✓ {sec_name:<12} | {duration:5.2f}s | RMS: {rms:6.1f} | Peak: {peak_int:5d} | Synth in {elapsed:4.2f}s | '{text}'", flush=True)
 
-# 7. Package into archive (save at both /content and /)
+    # Clean GPU memory between iterations
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+# 8. Package into Archive (/content/voice_row_{row_id}.tar.gz and /voice_row_{row_id}.tar.gz)
 ARCHIVE_PATH = Path(f"/content/voice_row_{row_id}.tar.gz")
 with tarfile.open(str(ARCHIVE_PATH), "w:gz") as tar:
     tar.add(str(OUTPUT_DIR), arcname=f"voice_row_{row_id}")
 
 try:
     shutil.copyfile(str(ARCHIVE_PATH), f"/voice_row_{row_id}.tar.gz")
-except Exception:
-    pass
+except Exception as exc:
+    print(f"⚠️ Notice: could not mirror archive to root: {exc}", flush=True)
 
-print(f"\n📦 Packaged all 12 WAV files to {ARCHIVE_PATH} ({ARCHIVE_PATH.stat().st_size} bytes)")
-print("\n[COLAB_SYNTH_COMPLETE]")
-print(json.dumps({
+print(f"\n📦 Packaged all {len(results)} WAV files to {ARCHIVE_PATH} ({ARCHIVE_PATH.stat().st_size} bytes)", flush=True)
+
+# 9. Stdout Completion Contract
+print("\n[COLAB_SYNTH_COMPLETE]", flush=True)
+completion_payload = {
     "status": "SUCCESS",
     "row_id": row_id,
+    "engine": "k2-fsa/OmniVoice",
+    "device": device,
+    "gpu_name": gpu_name,
     "archive_path": str(ARCHIVE_PATH),
     "sections_count": len(results),
-    "total_duration_sec": sum(r["duration"] for r in results.values()),
-    "total_synth_time_sec": sum(r["synth_time_sec"] for r in results.values()),
+    "speed": target_speed,
+    "sample_rate": model.sampling_rate,
+    "total_duration_sec": round(sum(r["duration"] for r in results.values()), 3),
+    "total_synth_time_sec": round(sum(r["synth_time_sec"] for r in results.values()), 3),
     "sections": results
-}, indent=2))
+}
+print(json.dumps(completion_payload, indent=2), flush=True)
