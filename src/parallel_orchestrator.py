@@ -16,7 +16,7 @@ import requests
 
 logger = logging.getLogger("lelestory.omni.parallel")
 
-DEFAULT_REPO = "naadld/lelestory.omni"
+DEFAULT_REPO = os.environ.get("GITHUB_REPOSITORY", "lchau4501-collab/lelestory.omni")
 DEFAULT_REF = "main"
 
 # Mapping of section name to workflow file
