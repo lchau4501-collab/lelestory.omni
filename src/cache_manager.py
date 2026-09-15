@@ -18,12 +18,12 @@ logger = logging.getLogger("lelestory.omni.cache")
 OMNIVOICE_CACHE_DIR = os.path.expanduser("~/.cache/omnivoice")
 K2FSA_CACHE_DIR = os.path.expanduser("~/.cache/k2-fsa")
 VOICE_SAMPLES_CACHE_DIR = os.path.join(OMNIVOICE_CACHE_DIR, "voice_samples")
-PINNED_VOICE_SAMPLE_PATH = os.path.join(VOICE_SAMPLES_CACHE_DIR, "reference.wav")
+PINNED_VOICE_SAMPLE_PATH = os.path.join(VOICE_SAMPLES_CACHE_DIR, "voice_preview_mark.mp3")
 PINNED_VOICE_TEXT_PATH = os.path.join(VOICE_SAMPLES_CACHE_DIR, "reference.txt")
 
-# Legacy GDrive file ID permanently eradicated per user policy
+# Canonical Voice Mark reference audio filename
 REFERENCE_GDRIVE_FILE_ID = ""
-REFERENCE_SAMPLE_FILENAME = "voice_preview_mark - cartoonish, funny and cheerful.mp3"
+REFERENCE_SAMPLE_FILENAME = "voice_preview_mark.mp3"
 REFERENCE_TRANSCRIPT = "不求与人相比，但求超越自己。"
 
 DEFAULT_MODEL_CHECKPOINTS = {
@@ -53,7 +53,7 @@ class ModelCacheManager:
         self.k2fsa_dir = k2fsa_dir or K2FSA_CACHE_DIR
         self.cache_dir = self.omnivoice_dir  # backward compatibility
         self.voice_samples_dir = os.path.join(self.omnivoice_dir, "voice_samples")
-        self.pinned_sample_path = os.path.join(self.voice_samples_dir, "reference.wav")
+        self.pinned_sample_path = os.path.join(self.voice_samples_dir, "voice_preview_mark.mp3")
         self.pinned_text_path = os.path.join(self.voice_samples_dir, "reference.txt")
 
         os.makedirs(self.omnivoice_dir, exist_ok=True)
