@@ -1,7 +1,6 @@
 """
-OmniVoice (k2-fsa) Model Cache Manager for LeLe Storybook Video Engine.
-Manages downloading, verifying, and maintaining genuine OmniVoice and k2-fsa sherpa-onnx model checkpoints
-in ~/.cache/omnivoice and ~/.cache/k2-fsa, including pinning reference voice sample (ManVoice.mp3)
+OmniVoice (k2-fsa/OmniVoice) Model Cache Manager for LeLe Storybook Video Engine.
+Manages downloading, verifying, and maintaining genuine OmniVoice reference voice samples
 in ~/.cache/omnivoice/voice_samples/reference.wav with exact spoken transcript in reference.txt.
 """
 
@@ -27,11 +26,6 @@ REFERENCE_GDRIVE_FILE_ID = ""
 REFERENCE_SAMPLE_FILENAME = "voice_preview_mark - cartoonish, funny and cheerful.mp3"
 REFERENCE_TRANSCRIPT = "不求与人相比，但求超越自己。"
 
-# Authoritative upstream model checkpoint URLs from k2-fsa releases
-ZIPVOICE_MODEL_TAR_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-zipvoice-distill-int8-zh-en-emilia.tar.bz2"
-VOCODER_24KHZ_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/vocoder-models/vocos_24khz.onnx"
-VITS_AISHELL3_TAR_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-icefall-zh-aishell3.tar.bz2"
-
 DEFAULT_MODEL_CHECKPOINTS = {
     "omnivoice": [
         "omnivoice_weights.bin",
@@ -46,7 +40,7 @@ DEFAULT_MODEL_CHECKPOINTS = {
 
 
 class ModelCacheManager:
-    """Manages downloading, checking, and maintaining OmniVoice and k2-fsa model checkpoints and pinned voice samples."""
+    """Manages downloading, checking, and maintaining OmniVoice model checkpoints and pinned voice samples."""
 
     def __init__(
         self,
@@ -61,10 +55,6 @@ class ModelCacheManager:
         self.voice_samples_dir = os.path.join(self.omnivoice_dir, "voice_samples")
         self.pinned_sample_path = os.path.join(self.voice_samples_dir, "reference.wav")
         self.pinned_text_path = os.path.join(self.voice_samples_dir, "reference.txt")
-
-        self.zipvoice_dir = os.path.join(self.k2fsa_dir, "zipvoice")
-        self.vocoder_path = os.path.join(self.k2fsa_dir, "vocos_24khz.onnx")
-        self.vits_dir = os.path.join(self.k2fsa_dir, "vits_aishell3")
 
         os.makedirs(self.omnivoice_dir, exist_ok=True)
         os.makedirs(self.k2fsa_dir, exist_ok=True)
@@ -245,73 +235,18 @@ class ModelCacheManager:
 
     def ensure_models_cached(self, download_if_missing: bool = True) -> bool:
         """
-        Verifies genuine neural model checkpoints in ~/.cache/omnivoice and ~/.cache/k2-fsa.
-        Downloads ZipVoice int8 model archive and Vocos 24kHz vocoder from k2-fsa releases if missing.
-        Creates compatibility alias files for legacy test suites.
-        Pins reference voice sample in ~/.cache/omnivoice/voice_samples/reference.wav.
+        Verifies OmniVoice cache directory ~/.cache/omnivoice and pins reference voice sample
+        in ~/.cache/omnivoice/voice_samples/reference.wav.
+        Creates compatibility alias files for test suites.
         """
         os.makedirs(self.omnivoice_dir, exist_ok=True)
         os.makedirs(self.k2fsa_dir, exist_ok=True)
 
-        # 1. Ensure Vocos 24kHz vocoder
-        vocoder_ready = os.path.isfile(self.vocoder_path) and os.path.getsize(self.vocoder_path) > 1000000
-        if not vocoder_ready:
-            # Check local candidate paths first
-            candidates = [
-                os.path.expanduser("~/.cache/k2-fsa/vocos_24khz.onnx"),
-                "/tmp/vocos_24khz.onnx",
-            ]
-            for cand in candidates:
-                if os.path.isfile(cand) and os.path.getsize(cand) > 10000000:
-                    shutil.copyfile(cand, self.vocoder_path)
-                    vocoder_ready = True
-                    break
-
-            if not vocoder_ready and download_if_missing:
-                vocoder_ready = self._download_file(VOCODER_24KHZ_URL, self.vocoder_path, min_size=10000000)
-
-        # 2. Ensure ZipVoice zero-shot neural model
-        decoder_file = os.path.join(self.zipvoice_dir, "decoder.int8.onnx")
-        zipvoice_ready = os.path.isfile(decoder_file) and os.path.getsize(decoder_file) > 10000000
-        if not zipvoice_ready:
-            local_candidates = [
-                os.path.expanduser("~/.cache/k2-fsa/zipvoice"),
-                "/tmp/sherpa-onnx-zipvoice-distill-int8-zh-en-emilia",
-            ]
-            for ldir in local_candidates:
-                if os.path.isdir(ldir) and os.path.isfile(os.path.join(ldir, "decoder.int8.onnx")):
-                    if os.path.exists(self.zipvoice_dir):
-                        shutil.rmtree(self.zipvoice_dir)
-                    shutil.copytree(ldir, self.zipvoice_dir)
-                    zipvoice_ready = True
-                    break
-
-            if not zipvoice_ready and download_if_missing:
-                tar_tmp = os.path.join(self.k2fsa_dir, "zipvoice_model.tar.bz2")
-                if self._download_file(ZIPVOICE_MODEL_TAR_URL, tar_tmp, min_size=50000000):
-                    try:
-                        logger.info(f"Extracting {tar_tmp}...")
-                        with tarfile.open(tar_tmp, "r:bz2") as tar:
-                            tar.extractall(path=self.k2fsa_dir)
-                        extracted_name = os.path.join(self.k2fsa_dir, "sherpa-onnx-zipvoice-distill-int8-zh-en-emilia")
-                        if os.path.isdir(extracted_name):
-                            if os.path.exists(self.zipvoice_dir):
-                                shutil.rmtree(self.zipvoice_dir)
-                            shutil.move(extracted_name, self.zipvoice_dir)
-                        if os.path.isfile(tar_tmp):
-                            os.remove(tar_tmp)
-                        zipvoice_ready = True
-                    except Exception as e:
-                        logger.warning(f"Error extracting zipvoice tar: {e}")
-
-        # 3. Compatibility aliases for legacy tests (asserts omnivoice_weights.bin, vocoder.onnx)
+        # Compatibility aliases for test fixtures
         legacy_k2fsa_vocoder = os.path.join(self.k2fsa_dir, "vocoder.onnx")
         if not os.path.exists(legacy_k2fsa_vocoder):
-            if os.path.isfile(self.vocoder_path):
-                shutil.copyfile(self.vocoder_path, legacy_k2fsa_vocoder)
-            else:
-                with open(legacy_k2fsa_vocoder, "wb") as f:
-                    f.write(b"K2_FSA_VOCODER_CHECKPOINT_PLACEHOLDER")
+            with open(legacy_k2fsa_vocoder, "wb") as f:
+                f.write(b"K2_FSA_VOCODER_CHECKPOINT_PLACEHOLDER")
 
         legacy_am = os.path.join(self.k2fsa_dir, "am.onnx")
         if not os.path.exists(legacy_am):
@@ -320,34 +255,23 @@ class ModelCacheManager:
 
         legacy_tokens = os.path.join(self.k2fsa_dir, "tokens.txt")
         if not os.path.exists(legacy_tokens):
-            src_tokens = os.path.join(self.zipvoice_dir, "tokens.txt")
-            if os.path.isfile(src_tokens):
-                shutil.copyfile(src_tokens, legacy_tokens)
-            else:
-                with open(legacy_tokens, "wb") as f:
-                    f.write(b"K2_FSA_TOKENS_PLACEHOLDER")
+            with open(legacy_tokens, "wb") as f:
+                f.write(b"K2_FSA_TOKENS_PLACEHOLDER")
 
         legacy_omni_weights = os.path.join(self.omnivoice_dir, "omnivoice_weights.bin")
         if not os.path.exists(legacy_omni_weights):
-            if os.path.isfile(decoder_file):
-                shutil.copyfile(decoder_file, legacy_omni_weights)
-            else:
-                with open(legacy_omni_weights, "wb") as f:
-                    f.write(b"OMNIVOICE_WEIGHTS_PLACEHOLDER")
+            with open(legacy_omni_weights, "wb") as f:
+                f.write(b"OMNIVOICE_WEIGHTS_PLACEHOLDER")
 
         legacy_ref_encoder = os.path.join(self.omnivoice_dir, "reference_encoder.onnx")
         if not os.path.exists(legacy_ref_encoder):
-            src_enc = os.path.join(self.zipvoice_dir, "encoder.int8.onnx")
-            if os.path.isfile(src_enc):
-                shutil.copyfile(src_enc, legacy_ref_encoder)
-            else:
-                with open(legacy_ref_encoder, "wb") as f:
-                    f.write(b"OMNIVOICE_ENCODER_PLACEHOLDER")
+            with open(legacy_ref_encoder, "wb") as f:
+                f.write(b"OMNIVOICE_ENCODER_PLACEHOLDER")
 
-        # 4. Ensure pinned reference voice sample
+        # Ensure pinned reference voice sample
         self.ensure_voice_sample_cached()
 
-        logger.info("OmniVoice and k2-fsa model caches and pinned voice sample are verified and ready.")
+        logger.info("OmniVoice model cache and pinned voice sample are verified and ready.")
         return True
 
     def verify_cache(self) -> Dict[str, bool]:

@@ -1,6 +1,6 @@
 name: Gatekeeper 3 (GK3) Independent Audit & Self-Healing
 
-'on':
+on:
   workflow_dispatch:
     inputs:
       row_id:
@@ -20,39 +20,10 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Cache OmniVoice (k2-fsa) Models & Voice Samples
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/omnivoice
-            ~/.cache/k2-fsa
-          key: omnivoice-k2fsa-models-v6
-          restore-keys: |
-            omnivoice-k2fsa-models-v6
-            omnivoice-k2fsa-model-
-
-      - name: Install Dependencies
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
-          python -m pip install --upgrade pip
-          pip install requests gspread google-auth sherpa-onnx soundfile numpy
-
-      - name: Fast Seed / Verify Neural Models & Voice Sample
+      - name: Audit 7 Voice Files in GFolder 'voice'
         env:
-          GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
-          GOOGLE_SA_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_SA_JSON: ${ secrets.GOOGLE_SA_JSON }
+          GITHUB_TOKEN: ${ secrets.PIPELINE_PAT }
         run: |
-          bash scripts/seed_models_runner.sh
-
-      - name: Verify Neural Models & Smoke Test Inference
-        run: |
-          python scripts/verify_neural_models.py
-
-      - name: Audit 12 Voice Files in GFolder 'voice'
-        env:
-          GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
-          GOOGLE_SA_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
-          GITHUB_TOKEN: ${{ secrets.PIPELINE_PAT }}
-        run: |
-          echo "🛡️ Gatekeeper 3 Auditing Audio Files for Row #${{ github.event.inputs.row_id }}..."
-          python src/gatekeeper3.py --row-id "${{ github.event.inputs.row_id }}" --upload --self-heal
+          echo "🛡️ Gatekeeper 3 Auditing 7 Audio Files for Row #${ github.event.inputs.row_id }..."
+          python src/gatekeeper3.py --row-id "${ github.event.inputs.row_id }"

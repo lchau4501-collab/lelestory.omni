@@ -4,7 +4,8 @@ Colab Remote Voice Synthesis Worker for LeLe Storybook Video Engine.
 Executes directly inside Google Colab VM with NVIDIA CUDA GPU accelerator (Tesla T4/L4/A100).
 Synthesizes authentic Chinese story audio sections using official k2-fsa/OmniVoice
 zero-shot neural voice cloning at 24,000 Hz mono PCM 16-bit.
-Uses speed=0.85 (15% reduction) for deliberate, natural pacing and zero distortion.
+Uses speed=0.70 (30% reduction) for deliberate, natural pacing and zero distortion.
+Supports dynamic 8–10 scenes + 5 vocab + vocab recap + outro loop (16–18 audio sections).
 """
 
 import os
@@ -29,15 +30,11 @@ try:
     import numpy as np
     print("✓ Official OmniVoice and dependencies already installed.", flush=True)
 except ImportError:
-    print("📦 Installing official k2-fsa/OmniVoice and soundfile via pip...", flush=True)
-    cmd = [sys.executable, "-m", "pip", "install", "-q", "omnivoice", "soundfile"]
-    res = subprocess.run(cmd)
-    if res.returncode != 0:
-        print("⚠️ Standard PyPI install failed, attempting git repository install...", flush=True)
-        subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-q", "git+https://github.com/k2-fsa/OmniVoice.git", "soundfile"],
-            check=True
-        )
+    print("📦 Installing official k2-fsa/OmniVoice from GitHub repository...", flush=True)
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "-q", "git+https://github.com/k2-fsa/OmniVoice.git", "soundfile"],
+        check=True
+    )
     import torch
     import omnivoice
     from omnivoice import OmniVoice
@@ -74,10 +71,12 @@ print(f"✓ OmniVoice model successfully loaded in {model_load_time:.2f}s.", flu
 # 4. Resilient Reference Voice Audio & Transcript Lookup
 ref_candidates = [
     Path("/content/reference.wav"),
-    Path("/reference.wav"),
     Path("reference.wav"),
+    Path("/reference.wav"),
     Path("/root/reference.wav"),
-    Path("/content/drive/MyDrive/reference.wav")
+    Path("/content/drive/MyDrive/reference.wav"),
+    Path("/content/voice_preview_mark - cartoonish, funny and cheerful.mp3"),
+    Path("voice_preview_mark - cartoonish, funny and cheerful.mp3")
 ]
 REF_WAV = None
 for c in ref_candidates:
@@ -86,7 +85,7 @@ for c in ref_candidates:
         break
 
 if not REF_WAV:
-    matches = glob.glob("/**/reference.wav", recursive=True)
+    matches = glob.glob("/**/reference.wav", recursive=True) + glob.glob("/**/voice_preview_mark*", recursive=True)
     for m in matches:
         p = Path(m)
         if p.exists() and p.stat().st_size > 0:
@@ -95,6 +94,15 @@ if not REF_WAV:
 
 if not REF_WAV or not REF_WAV.exists():
     raise FileNotFoundError(f"Reference voice audio not found. Searched {ref_candidates} and filesystem.")
+
+# Convert MP3 to standard 24kHz mono PCM WAV if needed
+if str(REF_WAV).lower().endswith(".mp3"):
+    converted_wav = REF_WAV.with_suffix(".24k.wav")
+    print(f"🔄 Converting reference MP3 ({REF_WAV}) to 24kHz mono WAV ({converted_wav})...", flush=True)
+    subprocess.run([
+        "ffmpeg", "-y", "-i", str(REF_WAV), "-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le", str(converted_wav)
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    REF_WAV = converted_wav
 
 ref_txt_candidates = [
     Path("/content/reference.txt"),
@@ -130,28 +138,89 @@ voice_prompt = model.create_voice_clone_prompt(
 prompt_compute_time = time.time() - t_prompt_start
 print(f"✓ VoiceClonePrompt pre-computed in {prompt_compute_time:.2f}s.", flush=True)
 
-# 6. Job Manifest & Target Script Configuration
+# 6. Dynamic Job Manifest & Script Resolution (8–10 Scenes, 5 Vocab, Recap, Outro Loop)
 parser = argparse.ArgumentParser(description="OmniVoice Colab Voice Synthesis Worker")
 parser.add_argument("--row-id", type=int, default=None, help="Story row ID")
-parser.add_argument("--speed", type=float, default=0.85, help="Speaking speed factor (default: 0.85)")
+parser.add_argument("--speed", type=float, default=0.70, help="Speaking speed factor (default: 0.70)")
+parser.add_argument("--manifest", type=str, default=None, help="Path to job manifest JSON")
 args, _ = parser.parse_known_args()
 
-MANIFEST_PATH = Path("/content/job_manifest.json")
-if MANIFEST_PATH.exists():
-    with open(MANIFEST_PATH, "r", encoding="utf-8") as f:
-        manifest = json.load(f)
+manifest_candidates = []
+if args.manifest:
+    manifest_candidates.append(Path(args.manifest))
+manifest_candidates.extend([
+    Path("/content/job_manifest.json"),
+    Path("job_manifest.json"),
+    Path("/job_manifest.json"),
+    Path("/root/job_manifest.json")
+])
+
+manifest = None
+manifest_found_path = None
+for mc in manifest_candidates:
+    if mc.exists() and mc.stat().st_size > 0:
+        try:
+            with open(mc, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+            manifest_found_path = mc
+            print(f"📄 Loaded dynamic job manifest from {mc}", flush=True)
+            break
+        except Exception as e:
+            print(f"⚠️ Failed to parse manifest from {mc}: {e}", flush=True)
+
+row_id = 2
+target_speed = args.speed
+script_items = {}
+
+if manifest:
     row_id = args.row_id if args.row_id is not None else manifest.get("row_id", 2)
-    script_items = manifest.get("script_items", {})
-    target_speed = args.speed if args.speed != 0.85 else manifest.get("speed", 0.85)
-else:
+    target_speed = args.speed if args.speed != 0.70 else manifest.get("speed", 0.70)
+
+    # If explicit script_items dictionary is present, use it
+    if "script_items" in manifest and isinstance(manifest["script_items"], dict) and len(manifest["script_items"]) > 0:
+        script_items = manifest["script_items"]
+    else:
+        # Dynamically build from structured schema (scenes, vocabulary, outro)
+        if "title" in manifest:
+            script_items["title"] = manifest["title"]
+
+        for s in manifest.get("scenes", []):
+            s_num = s.get("scene_num")
+            s_zh = s.get("zh", "").strip()
+            if s_num is not None and s_zh:
+                script_items[f"scene{s_num}"] = s_zh
+
+        vocab_words = []
+        for v in manifest.get("vocabulary", []):
+            idx = v.get("index")
+            w = v.get("word", "").strip()
+            if idx is not None and w:
+                script_items[f"vocab_{idx}"] = w
+                vocab_words.append(w)
+
+        if vocab_words:
+            script_items["vocab"] = " ".join(vocab_words)
+
+        outro_text = manifest.get("outro", {}).get("zh", "这些生词来自故事……")
+        if outro_text:
+            script_items["outro_loop"] = outro_text
+
+# Default Fallback: Standard 10-Scene Narrative Arc for Row #2 (18 sections total)
+if not script_items:
     row_id = args.row_id if args.row_id is not None else 2
     target_speed = args.speed
     script_items = {
         "title": "吃菜的大狼",
         "scene1": "深山里住着一只大灰狼，名叫罗罗。",
-        "scene2": "森林里的小动物们都很怕他，一见到他就跑。",
-        "scene3": "别害怕，我不吃肉，我只喜欢吃胡萝卜和白菜！",
-        "scene4": "小兔子们放心地笑了，大家围着罗罗一起开心地吃蔬菜火锅。",
+        "scene2": "罗罗虽然长得高大威猛，但他有一颗特别温柔的心。",
+        "scene3": "森林里的小动物们都很怕他，一见到他就吓得四处逃跑。",
+        "scene4": "小兔子皮皮不小心摔倒在地上，害怕得闭上了眼睛。",
+        "scene5": "罗罗轻轻扶起皮皮，递给他一根新鲜的甜胡萝卜。",
+        "scene6": "罗罗微笑着说：“别害怕，我不吃肉，我只喜欢吃蔬菜！”",
+        "scene7": "小动物们惊讶地围了过来，发现大灰狼真的在吃青菜和蘑菇。",
+        "scene8": "大家放心地笑了，决定一起帮助罗罗建立一个美丽的蔬菜庄园。",
+        "scene9": "森林里到处洋溢着欢声笑语，罗罗和伙伴们围着一起开心地吃蔬菜火锅。",
+        "scene10": "友谊和善良化解了一切偏见，爱让大家紧紧依偎在一起。",
         "vocab_1": "大灰狼",
         "vocab_2": "蔬菜",
         "vocab_3": "胡萝卜",
@@ -160,9 +229,20 @@ else:
         "vocab": "大灰狼 蔬菜 胡萝卜 白菜 火锅",
         "outro_loop": "这些生词来自故事……",
     }
+    print("ℹ️ Using default 10-Scene Chinese educational script (18 sections).", flush=True)
 
 OUTPUT_DIR = Path(f"/content/voice_row_{row_id}")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# Save active manifest in output directory for Gatekeeper audit downstream
+active_manifest = {
+    "row_id": row_id,
+    "speed": target_speed,
+    "sections_count": len(script_items),
+    "script_items": script_items
+}
+with open(OUTPUT_DIR / "job_manifest.json", "w", encoding="utf-8") as f:
+    json.dump(active_manifest, f, ensure_ascii=False, indent=2)
 
 print(f"\n🎨 Synthesizing {len(script_items)} story sections for Row #{row_id} with OmniVoice (speed={target_speed})...", flush=True)
 results = {}
@@ -172,7 +252,7 @@ for sec_name, text in script_items.items():
     out_file = OUTPUT_DIR / f"{sec_name}.wav"
     t0 = time.time()
     
-    # Generate speech with pre-computed voice prompt and target speed
+    # Generate speech with pre-computed voice prompt and target speed (0.70x tempo)
     audios = model.generate(
         text=text,
         voice_clone_prompt=voice_prompt,

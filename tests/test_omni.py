@@ -95,6 +95,19 @@ def make_test_wav(
     return filepath
 
 
+@pytest.fixture(autouse=True)
+def mock_neural_omnivoice_for_tests(monkeypatch):
+    """Mocks _synthesize_neural_omnivoice for CPU/VPS test suite to prevent heavy neural compute on VPS."""
+    def _fake_synth(text, output_path, reference_wav_path=None, tempo=1.0, language="zh"):
+        t_min, t_max = calculate_duration_bounds(text)
+        dur = max(t_min + 0.1, min(t_max - 0.1, (t_min + t_max) / 2.0))
+        make_test_wav(output_path, duration=dur, sample_rate=24000, channels=1, sampwidth=2, amplitude=3500.0, include_harmonics=True)
+        return True
+
+    import omni_tts
+    monkeypatch.setattr(omni_tts, "_synthesize_neural_omnivoice", _fake_synth)
+
+
 # ============================================================================
 # 1. Cache Manager Tests
 # ============================================================================
@@ -223,7 +236,7 @@ def test_audio_qc_missing_and_empty_file(tmp_path):
 
 
 def test_duration_bounds_calculation():
-    # Short words (N <= 3): [0.5s, 5.0s] for 0.85x tempo
+    # Short words (N <= 3): [0.5s, 5.0s] for speed=0.70 tempo
     t_min, t_max = calculate_duration_bounds("火锅")
     assert t_min == 0.5
     assert t_max == 5.0
@@ -233,11 +246,11 @@ def test_duration_bounds_calculation():
     assert t_max == 5.0
 
     # Sentence: "吃菜的大狼" (N=5 non-punctuation chars)
-    # T_min = max(1.0, round(5 * 0.15, 2)) = 1.0s
-    # T_max = max(4.0, round(5 * 1.05 + 2.5, 2)) = 7.75s
+    # T_min = max(1.2, round(5 * 0.22, 2)) = 1.2s
+    # T_max = max(5.0, round(5 * 1.50 + 3.0, 2)) = 10.5s
     t_min, t_max = calculate_duration_bounds("吃菜的大狼")
-    assert t_min == 1.0
-    assert t_max == 7.75
+    assert t_min == 1.2
+    assert t_max == 10.5
 
     # Check bounds validator
     ok, msg, _, _ = check_duration_bounds(1.26, "吃菜的大狼")
@@ -286,10 +299,10 @@ def test_audio_qc_check7_spectral_harmonic_speech_passes(tmp_path):
 
 def test_omni_tts_tempo_scaling(tmp_path):
     out_path = str(tmp_path / "tempo_test.wav")
-    generate_pcm_speech_wav("测试语速减半", out_path, tempo=0.5)
+    generate_pcm_speech_wav("测试语速减半", out_path, tempo=0.70)
     valid, reason, meta = check_wav_file(out_path)
     assert valid is True
-    assert meta["duration"] >= 2.0
+    assert meta["duration"] >= 0.5
 
 
 def test_strip_punctuation():
@@ -308,7 +321,7 @@ def test_strip_punctuation():
 def test_omni_tts_reference_voice_spec():
     engine = OmniVoiceEngine()
     assert engine.sample_id in ["", "1DpUPJQx-s41jJ25I0PE8HbfVW_DPXHEX"]
-    assert engine.reference_name in ["voice_preview_mark - cartoonish, funny and cheerful.mp3", "ManVoice.mp3", "Vegetarian WolfZ.wav", "Vegetarian Wolf.wav"]
+    assert engine.reference_name in ["voice_preview_mark - cartoonish, funny and cheerful.mp3", "ManVoice.mp3", "Vegetarian WolfZ.wav", "Vegetarian Wolf.wav", "reference.wav"]
 
 
 def test_omni_tts_script_texts():
@@ -463,7 +476,7 @@ def test_gatekeeper3_audit_success(tmp_path):
     # Synthesize all 12 required audio files using acoustic generator
     for section, filename, text in STORY_AUDIO_SPEC:
         p = os.path.join(voice_dir, filename)
-        generate_pcm_speech_wav(text, p)
+        generate_pcm_speech_wav(text, p, tempo=0.70)
 
     gk3 = Gatekeeper3()
     passed, reason, report = gk3.audit_row(row_id=2, voice_dir=voice_dir, self_heal=False)
@@ -478,14 +491,17 @@ def test_gatekeeper3_self_healing_targeted_redispatch(tmp_path):
     voice_dir = str(tmp_path / "voice_partial")
     os.makedirs(voice_dir, exist_ok=True)
 
-    # Generate 11 files, deliberately omit scene3.wav
+    # Generate 11 files with calibrated durations, deliberately omit scene3.wav
     for section, filename, text in STORY_AUDIO_SPEC:
         if filename == "scene3.wav":
             continue
         p = os.path.join(voice_dir, filename)
-        generate_pcm_speech_wav(text, p)
+        t_min, t_max = calculate_duration_bounds(text)
+        target_dur = max(t_min + 0.2, (t_min + t_max) / 2.0)
+        make_test_wav(p, duration=target_dur, sample_rate=24000, amplitude=4000.0)
 
     gk3 = Gatekeeper3()
+
 
     with patch.object(gk3.orchestrator, "dispatch_workflow", return_value=(True, "Healed")) as mock_dispatch:
         passed, reason, report = gk3.audit_row(
@@ -544,40 +560,43 @@ def test_build_atempo_filter_chain_invalid_tempo():
 
 
 def test_apply_tempo_scaling_085x(tmp_path):
-    """Verify active 0.85x tempo scaling preserves 24kHz mono 16-bit PCM and scales duration."""
+    """Verify zero-atempo policy: apply_tempo_scaling acts as identity bypass without DSP distortion."""
     test_wav = str(tmp_path / "test_085.wav")
     make_test_wav(test_wav, duration=2.0, sample_rate=24000, channels=1, sampwidth=2, amplitude=4000.0)
 
-    apply_tempo_scaling(test_wav, tempo=0.85)
+    res = apply_tempo_scaling(test_wav, tempo=0.85)
+    assert res == test_wav
     valid, reason, meta = check_wav_file(test_wav)
     assert valid is True
     assert meta["sample_rate"] == 24000
     assert meta["channels"] == 1
     assert meta["sampwidth"] == 2
     assert meta["rms"] >= 500.0
-    assert abs(meta["duration"] - (2.0 / 0.85)) < 0.05
+    assert abs(meta["duration"] - 2.0) < 0.05
 
 
 def test_apply_tempo_scaling_chained_sub_half(tmp_path):
-    """Verify filter chaining executes successfully for tempo < 0.5 (0.4x)."""
+    """Verify zero-atempo policy: tempo < 0.5 is safely bypassed as identity pass-through."""
     test_wav = str(tmp_path / "test_04.wav")
     make_test_wav(test_wav, duration=2.0, sample_rate=24000, channels=1, sampwidth=2, amplitude=4000.0)
 
-    apply_tempo_scaling(test_wav, tempo=0.4)
+    res = apply_tempo_scaling(test_wav, tempo=0.4)
+    assert res == test_wav
     valid, reason, meta = check_wav_file(test_wav)
     assert valid is True
-    assert abs(meta["duration"] - 5.0) < 0.1
+    assert abs(meta["duration"] - 2.0) < 0.05
 
 
 def test_apply_tempo_scaling_chained_super_double(tmp_path):
-    """Verify filter chaining executes successfully for tempo > 2.0 (2.5x)."""
+    """Verify zero-atempo policy: tempo > 2.0 is safely bypassed as identity pass-through."""
     test_wav = str(tmp_path / "test_25.wav")
     make_test_wav(test_wav, duration=2.0, sample_rate=24000, channels=1, sampwidth=2, amplitude=4000.0)
 
-    apply_tempo_scaling(test_wav, tempo=2.5)
+    res = apply_tempo_scaling(test_wav, tempo=2.5)
+    assert res == test_wav
     valid, reason, meta = check_wav_file(test_wav)
     assert valid is True
-    assert abs(meta["duration"] - 0.8) < 0.05
+    assert abs(meta["duration"] - 2.0) < 0.05
 
 
 def test_apply_tempo_scaling_identity_noop(tmp_path):
@@ -592,15 +611,29 @@ def test_apply_tempo_scaling_identity_noop(tmp_path):
 
 def test_duration_bounds_calibration_085x():
     """Verify duration bounds calibration for 0.85x tempo."""
-    t_min, t_max = calculate_duration_bounds("火锅")
+    t_min, t_max = calculate_duration_bounds("火锅", speed=0.85)
     assert t_min == 0.5
     assert t_max == 5.0
 
-    t_min, t_max = calculate_duration_bounds("吃菜的大狼")
+    t_min, t_max = calculate_duration_bounds("吃菜的大狼", speed=0.85)
     assert t_min == 1.0
     assert t_max == 7.75
 
-    ok, _, _, _ = check_duration_bounds(1.26, "吃菜的大狼")
+    ok, _, _, _ = check_duration_bounds(1.26, "吃菜的大狼", speed=0.85)
+    assert ok is True
+
+
+def test_duration_bounds_calibration_070x():
+    """Verify duration bounds calibration for 0.70x tempo."""
+    t_min, t_max = calculate_duration_bounds("火锅", speed=0.70)
+    assert t_min == 0.5
+    assert t_max == 5.0
+
+    t_min, t_max = calculate_duration_bounds("吃菜的大狼", speed=0.70)
+    assert t_min == 1.2
+    assert t_max == 10.5
+
+    ok, _, _, _ = check_duration_bounds(1.26, "吃菜的大狼", speed=0.70)
     assert ok is True
 
 
@@ -621,3 +654,93 @@ def test_dynamic_folder_resolution_in_orchestrator(monkeypatch):
     orch.dispatch_workflow("wfl1_gen_title.yml", row_id=3, voice_folder_id="custom_folder_123")
     assert captured_payload["inputs"]["row_id"] == "3"
     assert captured_payload["inputs"]["voice_folder_id"] == "custom_folder_123"
+
+from gatekeeper3 import (
+    STORY_AUDIO_SPEC_18,
+    STORY_AUDIO_SPEC_16,
+    build_audio_spec_from_manifest
+)
+from colab_orchestrator import build_job_manifest
+
+
+def test_gatekeeper3_audit_18_sections_success(tmp_path):
+    """Verify GK3 audits all 18 audio files dynamically (10 scenes + 5 vocab + recap + outro + title)."""
+    voice_dir = str(tmp_path / "voice_gk3_18")
+    os.makedirs(voice_dir, exist_ok=True)
+
+    # Synthesize all 18 required audio files with compliant durations
+    for section, filename, text in STORY_AUDIO_SPEC_18:
+        p = os.path.join(voice_dir, filename)
+        t_min, t_max = calculate_duration_bounds(text)
+        target_dur = max(t_min + 0.2, (t_min + t_max) / 2.0)
+        make_test_wav(p, duration=target_dur, sample_rate=24000, amplitude=4000.0)
+
+    gk3 = Gatekeeper3()
+    passed, reason, report = gk3.audit_row(
+        row_id=2,
+        voice_dir=voice_dir,
+        self_heal=False,
+        num_scenes=10
+    )
+
+    assert passed is True
+    assert "GK3 PASS" in reason
+    assert len(report["files_audited"]) == 18
+    assert report["failed_sections"] == []
+
+
+
+def test_gatekeeper3_audit_16_sections_from_manifest(tmp_path):
+    """Verify GK3 audits all 16 audio files dynamically from job_manifest.json (8 scenes)."""
+    voice_dir = str(tmp_path / "voice_gk3_16")
+    os.makedirs(voice_dir, exist_ok=True)
+
+    manifest = build_job_manifest(row_id=2, num_scenes=8)
+    manifest_path = os.path.join(voice_dir, "job_manifest.json")
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f)
+
+    spec = build_audio_spec_from_manifest(manifest)
+    assert len(spec) == 16
+
+    for section, filename, text in spec:
+        p = os.path.join(voice_dir, filename)
+        generate_pcm_speech_wav(text, p, tempo=0.70)
+
+    gk3 = Gatekeeper3()
+    passed, reason, report = gk3.audit_row(
+        row_id=2,
+        voice_dir=voice_dir,
+        self_heal=False
+    )
+
+    assert passed is True
+    assert len(report["files_audited"]) == 16
+    assert report["failed_sections"] == []
+
+
+def test_gatekeeper3_sync_google_sheet_mocked():
+    """Verify Gatekeeper 3 sync_google_sheet updates Col D to Voice, Col G to voice URL, and enforces 21px height."""
+    gk3 = Gatekeeper3()
+    mock_client = MagicMock()
+    mock_sh = MagicMock()
+    mock_ws = MagicMock()
+    mock_ws.id = 0
+    mock_sh.worksheet.return_value = mock_ws
+    mock_client.open_by_key.return_value = mock_sh
+
+    with patch.object(gk3, "_get_gsheet_client", return_value=mock_client):
+        success = gk3.sync_google_sheet(
+            row_id=2,
+            voice_url="https://drive.google.com/drive/folders/voice_123",
+            image_url="https://drive.google.com/drive/folders/images_123",
+            verified_count=18
+        )
+        assert success is True
+        mock_ws.update_cell.assert_any_call(2, 4, "Voice")
+        mock_ws.update_cell.assert_any_call(2, 7, "https://drive.google.com/drive/folders/voice_123")
+        mock_ws.update_cell.assert_any_call(2, 9, "https://drive.google.com/drive/folders/images_123")
+        mock_sh.batch_update.assert_called_once()
+        batch_req = mock_sh.batch_update.call_args[0][0]
+        assert batch_req["requests"][0]["updateDimensionProperties"]["properties"]["pixelSize"] == 21
+

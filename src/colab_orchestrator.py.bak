@@ -105,14 +105,14 @@ def build_job_manifest(
     row_id: int = 2,
     title: str = "吃菜的大狼",
     num_scenes: int = 10,
-    speed: float = 0.70,
+    speed: float = 0.85,
     custom_script: Optional[Dict[str, Any]] = None,
     include_vocab_recap: Optional[bool] = None
 ) -> Dict[str, Any]:
     """
     Dynamically constructs a comprehensive job_manifest.json conforming to PROJECT.md architecture.
     For Row #3, generates exactly 17 audio sections (title, scene1..scene10, vocab_1..vocab_5, outro_loop),
-    omitting the combined recap, with speed=0.70.
+    omitting the combined recap, with speed=0.85.
     """
     if custom_script is None:
         custom_script = load_gk2_script_for_row(row_id)
@@ -172,7 +172,6 @@ def build_job_manifest(
         if include_vocab_recap is None:
             include_vocab_recap = True if row_id == 2 else False
 
-    scenes = scenes[:num_scenes]
     script_items: Dict[str, str] = {"title": title}
     for s in scenes:
         script_items[f"scene{s['scene_num']}"] = s["zh"]
@@ -374,7 +373,7 @@ class ColabVoiceOrchestrator:
         row_id: int = 2,
         title: str = "吃菜的大狼",
         num_scenes: int = 10,
-        speed: float = 0.70,
+        speed: float = 0.85,
         custom_script: Optional[Dict[str, Any]] = None,
         include_vocab_recap: Optional[bool] = None
     ) -> Dict[str, Any]:
@@ -394,15 +393,7 @@ class ColabVoiceOrchestrator:
         """
         return self.run(row_id=row_id, max_rotations=max_rotations, force_gpu=force_gpu)
 
-    def run(
-        self,
-        row_id: int = 2,
-        speed: float = 0.70,
-        target_sections: Optional[List[str]] = None,
-        target_drive_folder: Optional[str] = None,
-        max_rotations: int = 3,
-        force_gpu: bool = True
-    ) -> bool:
+    def run(self, row_id: int = 2, max_rotations: int = 3, force_gpu: bool = True) -> bool:
         logger.info(f"=== Starting Colab Voice Pipeline for Story Row #{row_id} (force_gpu={force_gpu}) ===")
         ref_wav = ASSETS_DIR / "reference.wav"
         ref_txt = ASSETS_DIR / "reference.txt"
@@ -434,8 +425,6 @@ class ColabVoiceOrchestrator:
                     row_id=row_id,
                     ref_wav_path=ref_wav,
                     ref_txt_path=ref_txt,
-                    speed=speed,
-                    target_sections=target_sections,
                     force_gpu=force_gpu
                 )
                 if success:
@@ -461,47 +450,28 @@ class ColabVoiceOrchestrator:
 
         # Step 2: Upload WAV files to Google Drive
         local_voice_dir = ARTIFACTS_DIR / f"voice_row_{row_id}"
-        if target_drive_folder:
-            voice_folder_id = target_drive_folder
-            logger.info(f"Using target Google Drive folder: {voice_folder_id}")
-        else:
-            try:
-                voice_folder_id, voice_folder_url = resolve_voice_folder(row_id)
-                logger.info(f"Resolved Google Drive voice folder for Row #{row_id}: {voice_folder_id} ({voice_folder_url})")
-            except Exception as e:
-                logger.warning(f"Failed to dynamically resolve voice folder: {e}. Falling back to default for row.")
-                voice_folder_id = VOICE_FOLDER_ID_ROW_2 if row_id == 2 else "1D8ZZpzMiXTo_S_q56jpj0c5p6YKih72q"
+        try:
+            voice_folder_id, voice_folder_url = resolve_voice_folder(row_id)
+            logger.info(f"Resolved Google Drive voice folder for Row #{row_id}: {voice_folder_id} ({voice_folder_url})")
+        except Exception as e:
+            logger.warning(f"Failed to dynamically resolve voice folder: {e}. Falling back to default for row.")
+            voice_folder_id = VOICE_FOLDER_ID_ROW_2 if row_id == 2 else "1D8ZZpzMiXTo_S_q56jpj0c5p6YKih72q"
 
-        logger.info(f"📤 Uploading WAV files to Google Drive folder: {voice_folder_id} via analib-vpsg24gb:...")
-        include_args = []
-        if target_sections:
-            for s in target_sections:
-                include_args.extend(["--include", f"{s}*.wav"])
-        else:
-            include_args = ["--include", "*.wav"]
-
+        logger.info(f"📤 Uploading verified WAV files to Google Drive voice folder: {voice_folder_id} via analib-vpsg24gb:...")
         rclone_cmd = [
             "rclone", "copy",
             str(local_voice_dir),
             "analib-vpsg24gb:",
-            "--drive-root-folder-id", voice_folder_id
-        ] + include_args + ["--retries", "3", "-v"]
+            "--drive-root-folder-id", voice_folder_id,
+            "--include", "*.wav",
+            "--retries", "3",
+            "-v"
+        ]
         rc = subprocess.run(rclone_cmd)
         if rc.returncode != 0:
             logger.warning(f"rclone upload returned non-zero exit code: {rc.returncode}")
 
-        # Step 3: Quality Audit (Full Row Gatekeeper 3 or Section QC)
-        if target_sections:
-            from audio_qc import AudioQCAuditor
-            qc = AudioQCAuditor()
-            for s in target_sections:
-                s_path = local_voice_dir / f"{s}.wav"
-                if s_path.exists():
-                    res = qc.audit_audio(str(s_path))
-                    logger.info(f"Acoustic QC for {s}.wav (speed={speed}): {res}")
-            logger.info(f"🎉 Target section(s) {target_sections} synthesized at speed={speed} and uploaded to {voice_folder_id}!")
-            return True
-
+        # Step 3: Run Gatekeeper 3 Quality Audit & Sheet Synchronization
         logger.info("🛡️ Initiating Gatekeeper 3 Quality Audit & Sheet Sync...")
         auditor = Gatekeeper3()
         passed, summary, details = auditor.audit_row(
@@ -523,8 +493,6 @@ class ColabVoiceOrchestrator:
         row_id: int,
         ref_wav_path: Path,
         ref_txt_path: Path,
-        speed: float = 0.70,
-        target_sections: Optional[List[str]] = None,
         force_gpu: bool = True
     ) -> bool:
         session_name = f"voice_worker_{int(time.time()) % 10000}"
@@ -551,14 +519,9 @@ class ColabVoiceOrchestrator:
 
             logger.info(f"✓ Colab GPU VM successfully provisioned: {session_name}")
 
-            # 2. Build and Upload dynamic job_manifest.json (16-18 sections or subset)
+            # 2. Build and Upload dynamic job_manifest.json (16-18 sections)
             ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
-            manifest = self.build_job_manifest(row_id=row_id, speed=speed)
-            if target_sections:
-                filtered_items = {k: v for k, v in manifest.get("script_items", {}).items() if k in target_sections}
-                manifest["script_items"] = filtered_items
-                manifest["total_audio_sections"] = len(filtered_items)
-            manifest["speed"] = speed
+            manifest = self.build_job_manifest(row_id=row_id, speed=0.85)
             manifest_file = ARTIFACTS_DIR / f"job_manifest_row_{row_id}.json"
             with open(manifest_file, "w", encoding="utf-8") as f:
                 json.dump(manifest, f, ensure_ascii=False, indent=2)
@@ -617,14 +580,9 @@ class ColabVoiceOrchestrator:
             # Store manifest alongside audio
             shutil.copyfile(str(manifest_file), str(target_extract_dir / "job_manifest.json"))
 
-            # Zero-distortion policy: OmniVoice generates natively with speed factor.
-            # NO ffmpeg atempo post-processing to avoid phase distortion.
-
-
             wavs = list(target_extract_dir.glob("*.wav"))
             logger.info(f"✓ Successfully extracted {len(wavs)} WAV files for Row #{row_id}.")
-            expected = manifest.get("total_audio_sections") or len(manifest.get("script_items", {})) or 1
-            return len(wavs) >= expected
+            return len(wavs) >= manifest.get("total_audio_sections", 12)
 
         finally:
             # 7. Tear down VM immediately to preserve compute units (guaranteed clean teardown)
@@ -635,9 +593,6 @@ class ColabVoiceOrchestrator:
 def main():
     parser = argparse.ArgumentParser(description="Colab Voice Pipeline Orchestrator")
     parser.add_argument("--row-id", type=int, default=2, help="Story row ID to synthesize")
-    parser.add_argument("--speed", type=float, default=0.70, help="Speaking speed factor (e.g. 0.70)")
-    parser.add_argument("--sections", type=str, default=None, help="Comma-separated sections to synthesize (e.g. scene1)")
-    parser.add_argument("--upload-folder-id", type=str, default=None, help="Specific GDrive folder ID to upload")
     parser.add_argument(
         "--force-gpu",
         action="store_true",
@@ -653,16 +608,8 @@ def main():
     parser.add_argument("--max-rotations", type=int, default=3, help="Max account rotations on failure")
     args = parser.parse_args()
 
-    sections = [s.strip() for s in args.sections.split(",") if s.strip()] if args.sections else None
     orchestrator = ColabVoiceOrchestrator()
-    ok = orchestrator.run(
-        row_id=args.row_id,
-        speed=args.speed,
-        target_sections=sections,
-        target_drive_folder=args.upload_folder_id,
-        max_rotations=args.max_rotations,
-        force_gpu=args.force_gpu
-    )
+    ok = orchestrator.run(row_id=args.row_id, max_rotations=args.max_rotations, force_gpu=args.force_gpu)
     sys.exit(0 if ok else 1)
 
 

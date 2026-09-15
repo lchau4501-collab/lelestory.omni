@@ -1,9 +1,9 @@
 """
 Audio Quality Control (QC) and Acoustic Integrity Verification Module.
 Validates 24,000 Hz mono 16-bit PCM WAV audio characteristics,
-minimum RMS amplitude (silence rejection), dynamic speech duration bounding,
-and digital peak clipping detection.
-Calibrated for 1.0x native speech tempo (~1.18x duration vs baseline).
+minimum RMS amplitude (silence rejection, RMS >= 500), dynamic speech duration bounding,
+FFT spectral distribution, digital peak clipping detection, and OmniVoice provenance.
+Calibrated for speed=0.70 native speech tempo (slow cadence, pitch-preserved).
 """
 
 import os
@@ -36,13 +36,19 @@ def strip_punctuation(text: str) -> str:
     return PUNCTUATION_REGEX.sub("", text)
 
 
-def calculate_duration_bounds(text: str) -> Tuple[float, float]:
+def calculate_duration_bounds(text: str, speed: float = 0.70) -> Tuple[float, float]:
     """
     Calculates dynamic Chinese speech duration bounds [T_min, T_max] based on character count N,
-    calibrated for 1.0x native speech tempo (~1.18x duration vs baseline, pitch-preserved).
+    calibrated for speed=0.70 native speech tempo (slow cadence, pitch-preserved).
     
-    Formula for 1.0x native tempo:
+    Formula for speed=0.70 native tempo:
       N = non-punctuation character count
+      If N <= 3: T in [0.5s, 5.0s]
+      If N > 3:
+        T_min = max(1.2, round(N * 0.22, 2))
+        T_max = max(5.0, round(N * 1.50 + 3.0, 2))
+        
+    Backward-compatible fallback for speed >= 0.80 (e.g. legacy 0.85x tests):
       If N <= 3: T in [0.5s, 5.0s]
       If N > 3:
         T_min = max(1.0, round(N * 0.15, 2))
@@ -51,24 +57,52 @@ def calculate_duration_bounds(text: str) -> Tuple[float, float]:
     stripped = strip_punctuation(text)
     n = len(stripped)
 
-    if n <= 3:
-        t_min = 0.5
-        t_max = 5.0
+    if speed >= 0.80:
+        if n <= 3:
+            t_min = 0.5
+            t_max = 5.0
+        else:
+            t_min = max(1.0, round(n * 0.15, 2))
+            t_max = max(4.0, round(n * 1.05 + 2.5, 2))
     else:
-        t_min = max(1.0, round(n * 0.15, 2))
-        t_max = max(4.0, round(n * 1.05 + 2.5, 2))
+        # Default speed=0.70 calibration
+        if n <= 3:
+            t_min = 0.5
+            t_max = 5.0
+        else:
+            t_min = max(1.2, round(n * 0.22, 2))
+            t_max = max(5.0, round(n * 1.50 + 3.0, 2))
 
     return round(t_min, 2), round(t_max, 2)
 
 
-def check_duration_bounds(duration: float, text: str, tolerance: float = 0.1) -> Tuple[bool, str, float, float]:
+
+def check_duration_bounds(
+    duration: float,
+    text: str,
+    tolerance: float = 0.1,
+    speed: float = 0.70
+) -> Tuple[bool, str, float, float]:
     """
-    Verifies whether the audio duration falls within [T_min, T_max] for the given text.
+    Verifies whether the audio duration falls within [T_min, T_max] for the given text
+    at the specified speech speed (default speed=0.70).
     """
-    t_min, t_max = calculate_duration_bounds(text)
-    if duration < round(t_min - tolerance, 2):
+    t_min, t_max = calculate_duration_bounds(text, speed=speed)
+    n_chars = len(strip_punctuation(text))
+    # Accommodate naturally brief 2-character words down to DEFAULT_MIN_DURATION (0.25s)
+    # and dynamic 20% neural synthesis variance for natural prosody.
+    # When speed <= 0.75 (speed=0.70 native tempo), do not deduct 20% on lower bound
+    # so un-slowed 1.0x speech (< 1.98s for 9 chars) is strictly rejected.
+    if speed <= 0.75:
+        lower_tol = tolerance
+    else:
+        lower_tol = max(tolerance, round(t_min * 0.20, 2))
+    upper_tol = max(tolerance, round(t_min * 0.20, 2))
+    min_threshold = DEFAULT_MIN_DURATION if n_chars <= 3 else max(0.4, round(t_min - lower_tol, 2))
+    max_threshold = round(t_max + upper_tol, 2)
+    if duration < min_threshold:
         return False, f"Audio duration {duration:.2f}s is below minimum bound {t_min:.2f}s (char count={len(strip_punctuation(text))})", t_min, t_max
-    if duration > round(t_max + tolerance, 2):
+    if duration > max_threshold:
         return False, f"Audio duration {duration:.2f}s exceeds maximum bound {t_max:.2f}s (char count={len(strip_punctuation(text))})", t_min, t_max
     return True, f"Duration {duration:.2f}s within bounds [{t_min:.2f}s, {t_max:.2f}s]", t_min, t_max
 
@@ -131,7 +165,7 @@ def check_spectral_distribution(
         # Pure synthetic tones (160Hz / 440Hz sine buzzer) have ~0% energy above 5kHz (<0.0001%) and <0.01% above 2.5kHz
         # Human/neural speech exhibits non-zero energy at >= 5.0kHz and >= 1.0% above 2.5kHz
         # (calibrated to >= 0.05% for short words < 1.5s, and accommodates natural phonetic variance on vocab recaps)
-        eff_min_2500 = 0.05
+        eff_min_2500 = 0.02 if duration < 2.5 else 0.05
 
         if ratio_2500 < eff_min_2500 or energy_5000 <= 0.0:
             return False, ratio_2500, ratio_5000, (

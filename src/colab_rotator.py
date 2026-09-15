@@ -1,11 +1,15 @@
-
 """
 Colab Account Rotation Pool Manager for LeLe Storybook Video Engine.
-Manages a pool of Google Colab user profiles to rotate across multiple Gmail accounts,
-handling quota limits, cool-downs, and running colab commands with isolated environments.
+Manages a pool of Google Colab user profiles to rotate across multiple Gmail accounts (gmail_1 to gmail_5),
+handling quota limits, 1800s cooldown tracking, run counters, 3 retries, and running colab commands with isolated environments.
 
-STRICT POLICY:
-The account "aleron.dt@gmail.com" is PERMANENTLY FORBIDDEN and BLACKLISTED from Colab use.
+STRICT HARDENING POLICY:
+The account "aleron.dt@gmail.com" is PERMANENTLY FORBIDDEN and BLACKLISTED across 4 layers:
+1. Registration & alias validation
+2. Registry & filesystem auto-purging
+3. Token JWT claim and whoami inspection
+4. Command execution and environment runtime checks
+Any violation causes instant profile directory deletion and a fatal abort (PermissionError).
 """
 
 import os
@@ -17,7 +21,8 @@ import logging
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Union
+import shlex
 
 logger = logging.getLogger("lelestory.omni.colab_rotator")
 
@@ -31,9 +36,13 @@ BLACKLISTED_EMAILS = {
     "aleron.dt"
 }
 
+# Strict User Policy: 30-minute (1800s) cooldown tracking
+DEFAULT_COOLDOWN_SECONDS = 1800
+DEFAULT_MAX_RETRIES = 3
+
 
 class ColabAccountManager:
-    """Manages multi-account profiles and rotation for google-colab-cli."""
+    """Manages multi-account profiles and rotation for google-colab-cli with 4-layer blacklist protection."""
 
     def __init__(self, base_dir: str = PROFILES_BASE_DIR):
         self.base_dir = Path(base_dir)
@@ -50,8 +59,7 @@ class ColabAccountManager:
                 "last_active_account": None,
                 "blacklisted_emails": list(BLACKLISTED_EMAILS)
             }
-            with open(self.registry_path, "w", encoding="utf-8") as f:
-                json.dump(default_data, f, indent=2)
+            self._write_registry(default_data)
 
     def _read_registry(self) -> Dict[str, Any]:
         try:
@@ -60,30 +68,52 @@ class ColabAccountManager:
         except Exception as e:
             logger.warning(f"Error reading registry: {e}. Rebuilding...")
             self._ensure_registry()
-            return {"version": 1, "accounts": {}, "last_active_account": None, "blacklisted_emails": list(BLACKLISTED_EMAILS)}
+            with open(self.registry_path, "r", encoding="utf-8") as f:
+                return json.load(f)
 
     def _write_registry(self, data: Dict[str, Any]) -> None:
         data["blacklisted_emails"] = list(BLACKLISTED_EMAILS)
-        with open(self.registry_path, "w", encoding="utf-8") as f:
+        temp_file = self.registry_path.with_suffix(".tmp")
+        with open(temp_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
+        temp_file.replace(self.registry_path)
+
+    def _is_blacklisted(self, identifier: str) -> bool:
+        """Helper to test any string (email, alias, env var) against the permanent blacklist."""
+        if not identifier:
+            return False
+        clean = identifier.strip().lower()
+        return any(b in clean for b in BLACKLISTED_EMAILS)
 
     def _enforce_blacklist(self) -> None:
-        """Purges any blacklisted accounts that might have been added."""
+        """
+        Layer 2 Blacklist Guard:
+        Purges any blacklisted accounts from registry AND deletes their physical directories from disk.
+        """
         reg = self._read_registry()
-        dirty = False
-        to_delete = []
-        for alias, info in reg.get("accounts", {}).items():
+        accounts = reg.get("accounts", {})
+        purged = []
+        for alias, info in list(accounts.items()):
             email = (info.get("email") or "").strip().lower()
-            if any(b in email for b in BLACKLISTED_EMAILS):
+            if self._is_blacklisted(email) or self._is_blacklisted(alias):
                 logger.critical(f"POLICY VIOLATION DETECTED: Account {alias} ({email}) is blacklisted! Purging...")
-                to_delete.append(alias)
-                dirty = True
+                purged.append(alias)
+                del accounts[alias]
+                prof_dir = self.get_account_profile_dir(alias)
+                if prof_dir.exists():
+                    shutil.rmtree(prof_dir, ignore_errors=True)
 
-        for alias in to_delete:
-            self.remove_account(alias)
+        # Also inspect on-disk directory names in base_dir
+        if self.base_dir.exists():
+            for child in self.base_dir.iterdir():
+                if child.is_dir() and self._is_blacklisted(child.name):
+                    logger.critical(f"POLICY VIOLATION DETECTED: Rogue directory {child} matches blacklist! Deleting...")
+                    shutil.rmtree(child, ignore_errors=True)
 
-        if dirty:
-            reg = self._read_registry()
+        if purged:
+            reg["accounts"] = accounts
+            if reg.get("last_active_account") in purged:
+                reg["last_active_account"] = None
             self._write_registry(reg)
 
     def get_account_profile_dir(self, account_alias: str) -> Path:
@@ -91,12 +121,13 @@ class ColabAccountManager:
 
     def list_accounts(self) -> List[Dict[str, Any]]:
         """Returns all registered accounts with live status (excluding blacklisted)."""
+        self._enforce_blacklist()
         reg = self._read_registry()
         accounts = []
         now = time.time()
         for alias, info in reg.get("accounts", {}).items():
             email = (info.get("email") or "").strip().lower()
-            if any(b in email for b in BLACKLISTED_EMAILS):
+            if self._is_blacklisted(email) or self._is_blacklisted(alias):
                 continue
 
             profile_dir = self.get_account_profile_dir(alias)
@@ -128,11 +159,14 @@ class ColabAccountManager:
         return accounts
 
     def register_account(self, alias: str, email: str = "") -> Path:
-        """Creates directory structure for a new account profile, strictly checking blacklist."""
-        clean_email = email.strip().lower()
-        if any(b in clean_email for b in BLACKLISTED_EMAILS):
+        """
+        Layer 1 Blacklist Guard:
+        Creates directory structure for a new account profile, strictly checking blacklist.
+        Raises PermissionError on violation.
+        """
+        if self._is_blacklisted(email) or self._is_blacklisted(alias):
             raise PermissionError(
-                f"STRICT POLICY VIOLATION: Account {email} is PERMANENTLY BLACKLISTED and forbidden from Colab!"
+                f"STRICT POLICY VIOLATION: Account {email or alias} is PERMANENTLY BLACKLISTED and forbidden from Colab!"
             )
 
         profile_dir = self.get_account_profile_dir(alias)
@@ -154,8 +188,9 @@ class ColabAccountManager:
 
     def verify_account_token_email(self, alias: str) -> Optional[str]:
         """
-        Inspects the token for account alias to ensure it does not belong to a blacklisted user.
-        If blacklisted, purges it immediately.
+        Layer 3 Blacklist Guard:
+        Inspects the token for account alias (decoding JWT id_token claims and whoami).
+        If blacklisted, deletes the profile directory immediately from disk and raises PermissionError.
         """
         profile_dir = self.get_account_profile_dir(alias)
         token_file = profile_dir / ".config" / "colab-cli" / "token.json"
@@ -177,17 +212,17 @@ class ColabAccountManager:
             pass
 
         if not detected_email:
-            code, stdout, _ = self.run_colab_command(alias, ["whoami"], timeout=10)
+            code, stdout, _ = self.run_colab_command(alias, ["whoami"], timeout=10, max_retries=1)
             if code == 0 and "email:" in stdout.lower():
                 for line in stdout.splitlines():
                     if "email:" in line.lower():
                         detected_email = line.split(":", 1)[1].strip().lower()
                         break
 
-        if any(b in detected_email for b in BLACKLISTED_EMAILS):
-            logger.critical(f"FATAL: Token for account {alias} belongs to BLACKLISTED EMAIL {detected_email}! Deleting!")
+        if self._is_blacklisted(detected_email) or self._is_blacklisted(alias):
+            logger.critical(f"FATAL: Token for account {alias} belongs to BLACKLISTED EMAIL {detected_email}! Deleting profile instantly!")
             self.remove_account(alias)
-            raise PermissionError(f"CRITICAL ERROR: Account {detected_email} is BLACKLISTED and cannot be used!")
+            raise PermissionError(f"CRITICAL ERROR: Account {detected_email or alias} is BLACKLISTED and cannot be used!")
 
         if detected_email:
             reg = self._read_registry()
@@ -198,7 +233,7 @@ class ColabAccountManager:
         return detected_email
 
     def remove_account(self, alias: str) -> bool:
-        """Removes an account profile and deletes its directory."""
+        """Removes an account profile and deletes its directory immediately."""
         reg = self._read_registry()
         if alias in reg["accounts"]:
             del reg["accounts"][alias]
@@ -208,12 +243,17 @@ class ColabAccountManager:
 
         profile_dir = self.get_account_profile_dir(alias)
         if profile_dir.exists():
-            shutil.rmtree(profile_dir)
+            shutil.rmtree(profile_dir, ignore_errors=True)
         logger.info(f"Removed Colab account: {alias}")
         return True
 
-    def mark_cooldown(self, alias: str, duration_seconds: int = 14400, reason: str = "Quota Exceeded") -> None:
-        """Places an account in cooldown when quota or rate limits are hit."""
+    def mark_cooldown(
+        self,
+        alias: str,
+        duration_seconds: int = DEFAULT_COOLDOWN_SECONDS,
+        reason: str = "Quota/Rate Limit"
+    ) -> None:
+        """Places an account in cooldown (default: 1800s / 30 minutes)."""
         reg = self._read_registry()
         if alias in reg["accounts"]:
             reg["accounts"][alias]["status"] = "COOLING_DOWN"
@@ -223,19 +263,37 @@ class ColabAccountManager:
             self._write_registry(reg)
             logger.warning(f"Account {alias} entered COOLING_DOWN for {duration_seconds}s. Reason: {reason}")
 
-    def mark_success(self, alias: str) -> None:
-        """Records successful job execution for an account."""
+    def mark_success(self, alias: str, cooldown_seconds: int = 0) -> None:
+        """
+        Records successful job execution for an account.
+        Increments success_count, updates last_used, and optionally sets cooldown.
+        """
         reg = self._read_registry()
         if alias in reg["accounts"]:
-            reg["accounts"][alias]["status"] = "READY"
-            reg["accounts"][alias]["last_used"] = datetime.now(timezone.utc).isoformat()
-            reg["accounts"][alias]["cooldown_until"] = 0
+            now_iso = datetime.now(timezone.utc).isoformat()
+            reg["accounts"][alias]["last_used"] = now_iso
             reg["accounts"][alias]["success_count"] = reg["accounts"][alias].get("success_count", 0) + 1
             reg["last_active_account"] = alias
+
+            if cooldown_seconds > 0:
+                reg["accounts"][alias]["status"] = "COOLING_DOWN"
+                reg["accounts"][alias]["cooldown_until"] = time.time() + cooldown_seconds
+                logger.info(f"Account {alias} completed job. In cooldown for {cooldown_seconds}s.")
+            else:
+                reg["accounts"][alias]["status"] = "READY"
+                reg["accounts"][alias]["cooldown_until"] = 0
+
             self._write_registry(reg)
 
+    def record_run_result(self, alias: str, success: bool, error_msg: str = "") -> None:
+        """Records run result: marks success if true, else triggers cooldown."""
+        if success:
+            self.mark_success(alias)
+        else:
+            self.mark_cooldown(alias, reason=error_msg)
+
     def select_active_account(self) -> Optional[str]:
-        """Picks the best available non-blacklisted account."""
+        """Picks the best available non-blacklisted account that is READY."""
         accounts = self.list_accounts()
         ready_accounts = [a for a in accounts if a["status"] == "READY"]
 
@@ -245,18 +303,51 @@ class ColabAccountManager:
         ready_accounts.sort(key=lambda a: (a["failure_count"], -a["success_count"]))
         return ready_accounts[0]["alias"]
 
+    def get_earliest_available_account(self) -> Tuple[Optional[str], int]:
+        """Returns the alias of the account that will become available earliest and seconds remaining."""
+        accounts = self.list_accounts()
+        if not accounts:
+            return None, 0
+
+        ready = [a for a in accounts if a["status"] == "READY"]
+        if ready:
+            return ready[0]["alias"], 0
+
+        accounts.sort(key=lambda a: a["cooldown_remaining_sec"])
+        return accounts[0]["alias"], accounts[0]["cooldown_remaining_sec"]
+
     def run_colab_command(
         self,
         account_alias: str,
-        cmd_args: List[str],
+        cmd_args: Union[List[str], str],
         timeout: Optional[int] = None,
-        capture_output: bool = True
+        capture_output: bool = True,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        retry_delay: float = 2.0
     ) -> Tuple[int, str, str]:
-        """Executes a colab CLI command in the isolated context of the specified account."""
+        """
+        Layer 4 Blacklist Guard & Execution Runner with 3 Retries:
+        Executes a colab CLI command in the isolated context of the specified account.
+        Strictly refuses execution if account, email, or environment matches blacklist.
+        Retries up to max_retries on transient errors.
+        """
         reg = self._read_registry()
         acct_email = (reg.get("accounts", {}).get(account_alias, {}).get("email") or "").lower()
-        if any(b in acct_email for b in BLACKLISTED_EMAILS):
-            raise PermissionError(f"STRICT POLICY: Refusing execution with blacklisted email: {acct_email}")
+
+        # Check blacklist on account email, alias, and environment variables
+        env_checks = [
+            acct_email,
+            account_alias,
+            os.environ.get("COLAB_USER", ""),
+            os.environ.get("USER_EMAIL", ""),
+            os.environ.get("GOOGLE_ACCOUNT", "")
+        ]
+        for val in env_checks:
+            if self._is_blacklisted(val):
+                prof_dir = self.get_account_profile_dir(account_alias)
+                if prof_dir.exists():
+                    shutil.rmtree(prof_dir, ignore_errors=True)
+                raise PermissionError(f"STRICT POLICY: Refusing execution with blacklisted email/identifier: {val}")
 
         profile_dir = self.get_account_profile_dir(account_alias)
         env = os.environ.copy()
@@ -264,26 +355,68 @@ class ColabAccountManager:
         local_bin = os.path.expanduser("~/.local/bin")
         env["PATH"] = f"{local_bin}:{env.get('PATH', '')}"
 
+        if isinstance(cmd_args, str):
+            args = shlex.split(cmd_args)
+        else:
+            args = list(cmd_args)
+
+        if args and args[0] == "colab":
+            args = args[1:]
+
         executable = COLAB_EXECUTABLE if os.path.exists(COLAB_EXECUTABLE) else "colab"
-        full_cmd = [executable, "--auth", "oauth2"] + cmd_args
+        full_cmd = [executable, "--auth", "oauth2"] + args
 
         cmd_str = " ".join(full_cmd)
         logger.info(f"[{account_alias}] Running: {cmd_str}")
-        try:
-            res = subprocess.run(
-                full_cmd,
-                env=env,
-                capture_output=capture_output,
-                text=True,
-                timeout=timeout
-            )
-            return res.returncode, res.stdout or "", res.stderr or ""
-        except subprocess.TimeoutExpired:
-            logger.error(f"[{account_alias}] Command timed out after {timeout}s: {cmd_str}")
-            return -1, "", f"TimeoutExpired after {timeout}s"
-        except Exception as e:
-            logger.error(f"[{account_alias}] Execution error: {e}")
-            return -1, "", str(e)
+
+        last_code = -1
+        last_out = ""
+        last_err = ""
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                res = subprocess.run(
+                    full_cmd,
+                    env=env,
+                    capture_output=capture_output,
+                    text=True,
+                    timeout=timeout
+                )
+                last_code = res.returncode
+                last_out = res.stdout or ""
+                last_err = res.stderr or ""
+
+                if last_code == 0:
+                    return last_code, last_out, last_err
+
+                # Non-zero return code
+                if attempt < max_retries:
+                    logger.warning(f"[{account_alias}] Command failed (attempt {attempt}/{max_retries}, code {last_code}): {last_err or last_out}. Retrying in {retry_delay}s...")
+                    time.sleep(retry_delay)
+                else:
+                    return last_code, last_out, last_err
+
+            except subprocess.TimeoutExpired:
+                logger.error(f"[{account_alias}] Command timed out after {timeout}s (attempt {attempt}/{max_retries}): {cmd_str}")
+                last_code = -1
+                last_out = ""
+                last_err = f"TimeoutExpired after {timeout}s"
+                if attempt < max_retries:
+                    time.sleep(retry_delay)
+                else:
+                    return last_code, last_out, last_err
+
+            except Exception as e:
+                logger.error(f"[{account_alias}] Execution error (attempt {attempt}/{max_retries}): {e}")
+                last_code = -1
+                last_out = ""
+                last_err = str(e)
+                if attempt < max_retries:
+                    time.sleep(retry_delay)
+                else:
+                    return last_code, last_out, last_err
+
+        return last_code, last_out, last_err
 
 
 if __name__ == "__main__":

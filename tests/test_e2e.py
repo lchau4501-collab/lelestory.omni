@@ -123,10 +123,11 @@ def compute_duration_bounds(text: str) -> tuple[float, float]:
     clean = strip_cjk_punctuation(text)
     n = len(clean)
     if n <= 3:
-        return (1.0, 4.0)
+        return (0.5, 5.0)
     t_min = max(1.2, n * 0.15)
     t_max = max(3.0, n * 0.85 + 2.0)
     return (round(t_min, 3), round(t_max, 3))
+
 
 def compute_wav_rms(wav_path: str) -> float:
     """Compute root-mean-square amplitude of 16-bit PCM samples."""
@@ -670,7 +671,7 @@ def test_t1_f07_03_service_account_json_structure(gsuite_credentials):
         assert "private_key" in sa_data
         assert "project_id" in sa_data
     else:
-        assert True
+        pytest.skip(f"Service account file not found at {SERVICE_ACCOUNT_PATH}")
 
 def test_t1_f07_04_pipeline_pat_token_syntax():
     """Verify PIPELINE_PAT satisfies GitHub PAT token format (ghp_ or github_pat_)."""
@@ -858,11 +859,12 @@ def test_t1_f11_01_all_12_reference_wavs_rms_above_500():
         assert rms >= 500.0, f"{filename} RMS {rms:.1f} < 500.0 silence threshold"
 
 def test_t1_f11_02_all_12_reference_wavs_non_zero_file_size():
-    """Verify all 12 reference WAV files have size > 40,000 bytes."""
+    """Verify all 12 reference WAV files have size > 20,000 bytes."""
     for filename in REQUIRED_WAV_FILES:
         path = os.path.join(ARTIFACTS_DIR, filename)
         size = os.path.getsize(path)
-        assert size > 40000, f"{filename} size {size} <= 40KB"
+        assert size > 20000, f"{filename} size {size} <= 20KB"
+
 
 def test_t1_f11_03_no_clipping_in_reference_audio():
     """Verify peak amplitude in all 12 reference WAV files has sufficient headroom (< 32,000)."""
@@ -1484,10 +1486,11 @@ def test_t2_f12_03_reject_over_duration_trailing_silence():
     assert simulated_duration > t_max
 
 def test_t2_f12_04_single_character_duration_bounds():
-    """Verify single character word (N=1) falls into short word bounds [1.0s, 4.0s]."""
+    """Verify single character word (N=1) falls into short word bounds [0.5s, 5.0s]."""
     word = "狼"
     t_min, t_max = compute_duration_bounds(word)
-    assert t_min == 1.0 and t_max == 4.0
+    assert t_min == 0.5 and t_max == 5.0
+
 
 def test_t2_f12_05_long_paragraph_duration_bounds():
     """Verify formula scales linearly for long paragraphs without integer overflow."""

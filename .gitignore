@@ -1,6 +1,7 @@
 *.md
 docs/
 *.zip
+*.tar.gz
 .env
 __pycache__/
 *.py[cod]

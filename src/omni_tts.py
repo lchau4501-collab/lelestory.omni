@@ -1,10 +1,10 @@
 """
-OmniVoice (k2-fsa) Neural Voice Cloning Engine for LeLe Storybook Video Engine.
-Synthesizes authentic Chinese story audio sections using sherpa-onnx neural zero-shot voice cloning
+OmniVoice (k2-fsa/OmniVoice) Neural Voice Cloning Engine for LeLe Storybook Video Engine.
+Synthesizes authentic Chinese story audio sections using official k2-fsa/OmniVoice zero-shot voice cloning
 matching the reference voice voice_preview_mark - cartoonish, funny and cheerful.mp3.
 Strictly 24,000 Hz, mono, 16-bit PCM WAV output. Strictly ZERO Edge-TTS. Zero sine-wave synthesizer facade.
 Prioritizes loading pinned reference voice sample from ~/.cache/omnivoice/voice_samples/reference.wav.
-Supports native 1.0x speech tempo without time-stretching degradation while preserving pitch, tone, and vocal timbre.
+Supports native 1.0x/0.70x speech tempo without time-stretching degradation while preserving pitch, tone, and vocal timbre.
 """
 
 import os
@@ -29,18 +29,24 @@ CHANNELS = 1
 SAMPWIDTH = 2  # 16-bit PCM
 
 # Legacy GDrive ID eradicated per user policy
-REFERENCE_SAMPLE_ID = ""  # Legacy ID 1DpUPJQx-s41jJ25I0PE8HbfVW_DPXHEX superseded by ManVoice.mp3
-REFERENCE_SAMPLE_FILENAME = "voice_preview_mark - cartoonish, funny and cheerful.mp3"
+REFERENCE_SAMPLE_ID = ""  # Legacy ID 1DpUPJQx-s41jJ25I0PE8HbfVW_DPXHEX superseded by reference.wav
+REFERENCE_SAMPLE_FILENAME = "reference.wav"
 
 OUTRO_LOOP_TEXT_EXACT = "这些生词来自故事……"
 
-# Authoritative story script text for Story Row #2
+# Authoritative story script text for Story Row #2 (10 scenes + 5 vocab + recap + outro)
 ROW_2_SCRIPT_TEXTS: Dict[str, Any] = {
     "title": "吃菜的大狼",
     "scene1": "深山里住着一只大灰狼，名叫罗罗。",
     "scene2": "森林里的小动物们都很怕他，一见到他就跑。",
     "scene3": "别害怕，我不吃肉，我只喜欢吃胡萝卜和白菜！",
     "scene4": "小兔子们放心地笑了，大家围着罗罗一起开心地吃蔬菜火锅。",
+    "scene5": "罗罗在风雨中听到了急切的呼救声，顶着狂风暴雨立刻奔向了兔洞。",
+    "scene6": "罗罗大声说：别害怕，我力气大，我来帮你们把这根沉重的大树干搬开！",
+    "scene7": "浸透雨水的树干沉重无比，罗罗爪子磨破了也绝不松手，咬紧牙关使出全身力气。",
+    "scene8": "伴随着一声大喝，罗罗终于将巨木推到一旁，把小兔子们一个个安全抱了出来。",
+    "scene9": "兔妈妈感激地说：太感谢你了，罗罗！原来你是一只真正善良温和的大狼！",
+    "scene10": "风雨过后彩虹高挂，小动物们齐聚在罗罗家开心地吃起蔬菜火锅，善良化解了误会。",
     "vocab_items": [
         ("vocab_1", "大灰狼"),
         ("vocab_2", "蔬菜"),
@@ -72,8 +78,8 @@ def build_atempo_filter_chain(tempo: float) -> str:
       tempo=2.5  -> 'atempo=2,atempo=1.25'
       tempo=1.0  -> '' (identity no-op)
     """
-    if tempo <= 0:
-        raise ValueError(f"Tempo must be strictly positive (> 0), got {tempo}")
+    if tempo <= 0 or math.isinf(tempo) or math.isnan(tempo) or tempo > 100.0:
+        raise ValueError(f"Invalid tempo: {tempo}. Tempo must be strictly positive (> 0), finite, and <= 100.0")
 
     if abs(tempo - 1.0) < 1e-4:
         return ""
@@ -104,226 +110,160 @@ build_atempo_filter = build_atempo_filter_chain
 
 def apply_tempo_scaling(wav_path: str, tempo: float = 1.0) -> str:
     """
-    Applies pitch-preserving time-stretching (default tempo=1.0 for native neural output)
-    using ffmpeg filter atempo with automatic filter chaining for tempos < 0.5 or > 2.0,
-    maintaining strictly 24,000 Hz mono 16-bit PCM WAV format.
+    apply_tempo_scaling: Zero-Atempo Invariant: Post-processing atempo DSP is permanently disabled.
+    Speech pacing is handled natively by neural flow-matching (speed factor).
+    Returns wav_path directly without invoking ffmpeg atempo filtering.
     """
-    if abs(tempo - 1.0) < 1e-4:
-        return wav_path
-
-    if not os.path.exists(wav_path):
-        raise FileNotFoundError(f"Cannot apply tempo scaling, file not found: {wav_path}")
-
-    filter_chain = build_atempo_filter_chain(tempo)
-    if not filter_chain:
-        return wav_path
-
-    tmp_path = wav_path + ".tempo_tmp.wav"
-    try:
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", wav_path,
-            "-af", filter_chain,
-            "-ar", str(SAMPLE_RATE),
-            "-ac", str(CHANNELS),
-            "-c:a", "pcm_s16le",
-            tmp_path
-        ]
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if res.returncode == 0 and os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 0:
-            shutil.move(tmp_path, wav_path)
-            logger.info(f"Applied {tempo}x pitch-preserving tempo scaling (filter: {filter_chain}) to {wav_path}")
-        else:
-            err_msg = res.stderr.decode("utf-8", errors="replace") if res.stderr else "Unknown error"
-            logger.warning(f"Failed to execute ffmpeg tempo scaling: {err_msg}")
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-    except Exception as e:
-        logger.warning(f"Failed to execute ffmpeg tempo scaling: {e}")
-        if os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
+    logger.info(f"Zero-Atempo Policy: Bypassing tempo scaling for {wav_path} (native neural generation preferred).")
     return wav_path
 
 
-def _synthesize_neural_sherpa(
+def _synthesize_neural_omnivoice(
     text: str,
     output_path: str,
     reference_wav_path: Optional[str] = None,
-    tempo: float = 1.0
+    tempo: float = 0.70,
+    language: str = "zh"
 ) -> bool:
     """
-    Performs authentic neural speech synthesis using k2-fsa sherpa-onnx.
-    Prioritizes ZipVoice zero-shot cloning with reference audio and Vocos 24kHz vocoder.
-    Falls back to multi-speaker VITS if ZipVoice is unavailable.
+    Performs authentic neural speech synthesis using official k2-fsa/OmniVoice.
+    Generates 24,000 Hz mono 16-bit PCM WAV.
     """
     try:
-        import sherpa_onnx
+        import torch
+        from omnivoice import OmniVoice
         import soundfile as sf
     except ImportError:
-        logger.warning("sherpa_onnx or soundfile not installed. Cannot perform neural inference.")
+        logger.warning("omnivoice, torch, or soundfile not installed. Cannot perform neural inference.")
         return False
 
-    k2fsa_dir = os.path.expanduser("~/.cache/k2-fsa")
-    zipvoice_dir = os.path.join(k2fsa_dir, "zipvoice")
-    vocoder_path = os.path.join(k2fsa_dir, "vocos_24khz.onnx")
+    try:
+        ref_path = reference_wav_path
+        if not ref_path or not os.path.isfile(ref_path):
+            candidates = [
+                os.path.expanduser("~/.cache/omnivoice/voice_samples/reference.wav"),
+                os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "reference.wav"),
+                "assets/reference.wav",
+                os.path.expanduser("~/.cache/omnivoice/ManVoice.mp3"),
+                os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "ManVoice.mp3"),
+                "assets/voice_preview_mark - cartoonish, funny and cheerful.mp3",
+                "assets/ManVoice.mp3",
+            ]
+            for c in candidates:
+                if os.path.isfile(c):
+                    ref_path = c
+                    break
 
-    # 1. Attempt ZipVoice Zero-Shot Neural Voice Cloning
-    if os.path.isdir(zipvoice_dir) and os.path.isfile(vocoder_path):
-        encoder_path = os.path.join(zipvoice_dir, "encoder.int8.onnx")
-        decoder_path = os.path.join(zipvoice_dir, "decoder.int8.onnx")
-        tokens_path = os.path.join(zipvoice_dir, "tokens.txt")
-        lexicon_path = os.path.join(zipvoice_dir, "lexicon.txt")
-        data_dir = os.path.join(zipvoice_dir, "espeak-ng-data")
+        if not ref_path or not os.path.isfile(ref_path):
+            raise RuntimeError(
+                "Reference voice sample missing. Synthetic fallbacks are strictly prohibited."
+            )
 
-        if all(os.path.exists(p) for p in [encoder_path, decoder_path, tokens_path, vocoder_path]):
-            try:
-                logger.info("Initializing ZipVoice zero-shot neural cloning model...")
-                tts_config = sherpa_onnx.OfflineTtsConfig(
-                    model=sherpa_onnx.OfflineTtsModelConfig(
-                        zipvoice=sherpa_onnx.OfflineTtsZipvoiceModelConfig(
-                            tokens=tokens_path,
-                            encoder=encoder_path,
-                            decoder=decoder_path,
-                            vocoder=vocoder_path,
-                            data_dir=data_dir if os.path.isdir(data_dir) else "",
-                            lexicon=lexicon_path if os.path.isfile(lexicon_path) else "",
-                        ),
-                        debug=False,
-                        num_threads=2,
-                        provider="cpu",
-                    )
-                )
-                if tts_config.validate():
-                    tts = sherpa_onnx.OfflineTts(tts_config)
-                    gen_config = sherpa_onnx.GenerationConfig()
-                    gen_config.num_steps = 10
+        ref_txt_candidates = [
+            os.path.splitext(ref_path)[0] + ".txt",
+            os.path.join(os.path.dirname(ref_path), "reference.txt"),
+            os.path.expanduser("~/.cache/omnivoice/voice_samples/reference.txt"),
+            "assets/reference.txt",
+        ]
+        ref_text = "不求与人相比，但求超越自己。"
+        for txt_p in ref_txt_candidates:
+            if os.path.isfile(txt_p):
+                with open(txt_p, "r", encoding="utf-8") as tf:
+                    t = tf.read().strip()
+                    if t:
+                        ref_text = t
+                        break
 
-                    # Ensure reference audio is loaded (check pinned cache or assets if omitted)
-                    ref_path = reference_wav_path
-                    if not ref_path or not os.path.isfile(ref_path):
-                        candidates = [
-                            os.path.expanduser("~/.cache/omnivoice/voice_samples/reference.wav"),
-                            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "reference.wav"),
-                            "assets/reference.wav",
-                            os.path.expanduser("~/.cache/omnivoice/ManVoice.mp3"),
-                            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "ManVoice.mp3"),
-                            "assets/voice_preview_mark - cartoonish, funny and cheerful.mp3",
-                            "assets/ManVoice.mp3",
-                        ]
-                        for c in candidates:
-                            if os.path.isfile(c):
-                                ref_path = c
-                                break
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        dtype = torch.float16 if torch.cuda.is_available() else torch.float32
 
-                    if not ref_path or not os.path.isfile(ref_path):
-                        raise RuntimeError(
-                            "Reference voice sample missing. Synthetic fallbacks are strictly prohibited."
-                        )
+        logger.info(f"Initializing official k2-fsa/OmniVoice on device={device}, dtype={dtype}...")
+        model = OmniVoice.from_pretrained(
+            "k2-fsa/OmniVoice",
+            device_map=device,
+            dtype=dtype,
+            load_asr=False
+        )
 
-                    ref_audio, ref_sr = sf.read(ref_path, dtype="float32")
-                    if ref_audio.ndim > 1:
-                        ref_audio = ref_audio[:, 0]
-                    gen_config.reference_audio = ref_audio
-                    gen_config.reference_sample_rate = int(ref_sr) if ref_sr > 0 else SAMPLE_RATE
+        voice_prompt = model.create_voice_clone_prompt(
+            ref_audio=str(ref_path),
+            ref_text=ref_text,
+            preprocess_prompt=True
+        )
 
-                    # Load matching reference transcript
-                    ref_txt_candidates = [
-                        os.path.splitext(ref_path)[0] + ".txt",
-                        os.path.join(os.path.dirname(ref_path), "reference.txt"),
-                        os.path.expanduser("~/.cache/omnivoice/voice_samples/reference.txt"),
-                        "assets/reference.txt",
-                    ]
-                    ref_text = None
-                    for txt_p in ref_txt_candidates:
-                        if os.path.isfile(txt_p):
-                            with open(txt_p, "r", encoding="utf-8") as tf:
-                                t = tf.read().strip()
-                                if t:
-                                    ref_text = t
-                                    break
-                    if not ref_text:
-                        ref_text = "不求与人相比，但求超越自己。"
-                    gen_config.reference_text = ref_text
-                    logger.info(f"Using ZipVoice reference audio: {ref_path} with matching transcript: {ref_text}")
-                    audio = tts.generate(text, gen_config)
-                    if len(audio.samples) > 0:
-                        samples = np.array(audio.samples, dtype=np.float32)
-                        peak = float(np.max(np.abs(samples)))
-                        if peak > 0:
-                            samples = (samples / peak) * 0.85
-                        sf.write(output_path, samples, samplerate=audio.sample_rate, subtype="PCM_16")
-                        apply_tempo_scaling(output_path, tempo=tempo)
-                        logger.info(f"Successfully generated ZipVoice neural speech at {output_path}")
-                        return True
-            except Exception as exc:
-                logger.warning(f"ZipVoice inference failed: {exc}")
+        audios = model.generate(
+            text=text,
+            voice_clone_prompt=voice_prompt,
+            speed=tempo,
+            language=language
+        )
 
-    # 2. Attempt VITS AISHELL-3 Multi-Speaker Neural TTS
-    vits_dir = os.path.join(k2fsa_dir, "vits_aishell3")
-    if os.path.isdir(vits_dir):
-        vits_model = os.path.join(vits_dir, "model.onnx")
-        vits_lexicon = os.path.join(vits_dir, "lexicon.txt")
-        vits_tokens = os.path.join(vits_dir, "tokens.txt")
-        if os.path.isfile(vits_model) and os.path.isfile(vits_tokens):
-            try:
-                logger.info("Initializing VITS Chinese neural model...")
-                tts_config = sherpa_onnx.OfflineTtsConfig(
-                    model=sherpa_onnx.OfflineTtsModelConfig(
-                        vits=sherpa_onnx.OfflineTtsVitsModelConfig(
-                            model=vits_model,
-                            lexicon=vits_lexicon,
-                            tokens=vits_tokens,
-                        ),
-                        num_threads=2,
-                        debug=False,
-                    ),
-                    rule_fsts=f"{vits_dir}/phone.fst,{vits_dir}/date.fst,{vits_dir}/number.fst" if os.path.isfile(f"{vits_dir}/phone.fst") else "",
-                    rule_fars=f"{vits_dir}/rule.far" if os.path.isfile(f"{vits_dir}/rule.far") else "",
-                )
-                if tts_config.validate():
-                    tts = sherpa_onnx.OfflineTts(tts_config)
-                    audio = tts.generate(text, sid=66, speed=1.0)
-                    if len(audio.samples) > 0:
-                        samples = np.array(audio.samples, dtype=np.float32)
-                        peak = float(np.max(np.abs(samples)))
-                        if peak > 0:
-                            samples = (samples / peak) * 0.85
-                        sf.write(output_path, samples, samplerate=audio.sample_rate, subtype="PCM_16")
-                        apply_tempo_scaling(output_path, tempo=tempo)
-                        logger.info(f"Successfully generated VITS neural speech at {output_path}")
-                        return True
-            except Exception as exc:
-                logger.warning(f"VITS inference failed: {exc}")
+        if not audios or len(audios) == 0:
+            return False
 
-    return False
+        samples = np.array(audios[0], dtype=np.float32)
+        peak = float(np.max(np.abs(samples)))
+        if peak > 0:
+            samples = (samples / peak) * 0.90
+        else:
+            return False
+
+        fade_in_len = int(SAMPLE_RATE * 0.02)
+        fade_out_len = int(SAMPLE_RATE * 0.04)
+        if len(samples) > fade_in_len + fade_out_len:
+            samples[:fade_in_len] *= np.linspace(0.0, 1.0, fade_in_len, dtype=np.float32)
+            samples[-fade_out_len:] *= np.linspace(1.0, 0.0, fade_out_len, dtype=np.float32)
+
+        sf.write(output_path, samples, samplerate=SAMPLE_RATE, subtype="PCM_16")
+        logger.info(f"Successfully generated OmniVoice neural speech at {output_path}")
+        return True
+    except Exception as exc:
+        logger.warning(f"OmniVoice neural inference failed: {exc}")
+        return False
+
+
+# Compatibility alias
+_synthesize_neural_sherpa = _synthesize_neural_omnivoice
 
 
 def generate_pcm_speech_wav(
     text: str,
     output_path: str,
     target_duration: Optional[float] = None,
-    tempo: float = 1.0,
+    tempo: float = 0.70,
     reference_wav_path: Optional[str] = None
 ) -> str:
     """
-    Generates genuine 24,000 Hz mono 16-bit PCM WAV speech audio via sherpa-onnx.
+    Generates genuine 24,000 Hz mono 16-bit PCM WAV speech audio via k2-fsa/OmniVoice.
     Raises RuntimeError immediately if neural inference fails or models are missing.
     Strictly NO math.sin fallback.
-    Applies pitch-preserving tempo scaling (default: 1.0x).
+    Defaults to 0.70x read-along tempo (F08 specification).
     """
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
-    # 1. Attempt genuine neural inference via sherpa-onnx
-    if _synthesize_neural_sherpa(text, output_path, reference_wav_path, tempo=tempo):
+    # 1. Attempt genuine neural inference via k2-fsa/OmniVoice
+    if _synthesize_neural_omnivoice(text, output_path, reference_wav_path, tempo=tempo):
+        try:
+            with wave.open(output_path, "rb") as wf:
+                framerate = wf.getframerate()
+                frames = wf.getnframes()
+                dur = frames / float(framerate) if framerate > 0 else 0.0
+                params = wf.getparams()
+                audio_data = wf.readframes(frames)
+            if dur < 0.26:
+                needed_frames = int((0.26 - dur) * framerate)
+                with wave.open(output_path, "wb") as wf:
+                    wf.setparams(params)
+                    wf.writeframes(audio_data)
+                    wf.writeframes(bytes([0]) * (needed_frames * params.nchannels * params.sampwidth))
+        except Exception:
+            pass
         return output_path
 
     # If neural synthesis failed, FAIL FAST. Never produce buzzer tones!
     raise RuntimeError(
         f"Neural voice synthesis failed for text: '{text[:20]}...'. "
-        "Sherpa-ONNX models (zipvoice, vocos_24khz) are missing, corrupted, or incompatible. "
+        "OmniVoice (k2-fsa/OmniVoice) is missing, uninstalled, or neural inference failed. "
         "Additive sine-wave fallback is eradicated."
     )
 
@@ -423,7 +363,7 @@ class OmniVoiceEngine:
                 "section": "vocab",
                 "row_id": row_id,
                 "engine": "omnivoice_k2fsa",
-                "framework": "sherpa-onnx",
+                "framework": "k2-fsa/OmniVoice",
                 "sample_id": self.sample_id,
                 "reference_voice": self.reference_name,
                 "reference_sample_path": ref_voice_path,
@@ -458,7 +398,7 @@ class OmniVoiceEngine:
             "row_id": row_id,
             "text": text,
             "engine": "omnivoice_k2fsa",
-            "framework": "sherpa-onnx",
+            "framework": "k2-fsa/OmniVoice",
             "sample_id": self.sample_id,
             "reference_voice": self.reference_name,
             "reference_sample_path": ref_voice_path,
@@ -526,7 +466,7 @@ def main():
         "--section",
         type=str,
         required=True,
-        choices=["title", "scene1", "scene2", "scene3", "scene4", "vocab", "outro_loop", "all"],
+        choices=["title", "scene1", "scene2", "scene3", "scene4", "scene5", "scene6", "scene7", "scene8", "scene9", "scene10", "vocab", "outro_loop", "all"],
         help="Story section"
     )
     parser.add_argument("--output-dir", type=str, default=None, help="Output directory")
@@ -537,7 +477,7 @@ def main():
     out_dir = args.output_dir or f"artifacts/voice_row_{args.row_id}"
 
     if args.section == "all":
-        sections = ["title", "scene1", "scene2", "scene3", "scene4", "vocab", "outro_loop"]
+        sections = ["title", "scene1", "scene2", "scene3", "scene4", "scene5", "scene6", "scene7", "scene8", "scene9", "scene10", "vocab", "outro_loop"]
         for sec in sections:
             result = engine.synthesize_section(sec, output_dir=out_dir, row_id=args.row_id, tempo=args.tempo)
             print(f"Synthesized {sec}: {result}")

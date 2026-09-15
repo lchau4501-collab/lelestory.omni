@@ -1,16 +1,12 @@
 name: WFL 4 - Gen Scene 3 Audio
 
-'on':
+on:
   workflow_dispatch:
     inputs:
       row_id:
         description: 'Target Sheet Row Number (# ID)'
         required: true
         default: '2'
-      voice_folder_id:
-        description: 'Target Google Drive Voice Folder ID (optional, dynamically resolved if omitted)'
-        required: false
-        default: ''
 
 jobs:
   synthesize_voice_section:
@@ -24,87 +20,24 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Cache OmniVoice (k2-fsa) Models & Voice Samples
+      - name: Cache OmniVoice (k2-fsa) Models
         uses: actions/cache@v4
         with:
           path: |
             ~/.cache/omnivoice
             ~/.cache/k2-fsa
-          key: omnivoice-k2fsa-models-v6
+          key: omnivoice-k2fsa-model-v1
           restore-keys: |
-            omnivoice-k2fsa-models-v6
             omnivoice-k2fsa-model-
 
       - name: Install Dependencies
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
           python -m pip install --upgrade pip
-          pip install requests gspread google-auth sherpa-onnx soundfile numpy
-
-      - name: Fast Seed / Verify Neural Models & Voice Sample
-        env:
-          GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
-          GOOGLE_SA_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
-        run: |
-          bash scripts/seed_models_runner.sh
-
-      - name: Verify Neural Models & Smoke Test Inference
-        run: |
-          python scripts/verify_neural_models.py
+          pip install requests gspread google-auth soundfile numpy pypinyin transformers accelerate torch torchaudio omnivoice
 
       - name: Synthesize OmniVoice Section [scene3]
         env:
-          GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
-          GOOGLE_SA_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_SA_JSON: ${ secrets.GOOGLE_SA_JSON }
         run: |
-          echo "🎙️ Synthesizing OmniVoice section 'scene3' for Row #${{ github.event.inputs.row_id }}..."
-          python src/omni_tts.py --row-id "${{ github.event.inputs.row_id }}" --section "scene3" --tempo 1.0
-
-      - name: Install rclone
-        run: |
-          if ! command -v rclone &> /dev/null || [[ "$(rclone version | head -n1)" == *"1.53"* ]]; then
-            curl -fsSL https://rclone.org/install.sh | sudo bash
-          fi
-          rclone version
-
-      - name: Resolve Google Drive Voice Folder ID
-        id: resolve_folder
-        env:
-          GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
-          GOOGLE_SA_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
-        run: |
-          ROW_ID="${{ github.event.inputs.row_id || '2' }}"
-          INPUT_FOLDER_ID="${{ github.event.inputs.voice_folder_id }}"
-          if [ -n "$INPUT_FOLDER_ID" ]; then
-            echo "Using provided voice_folder_id: $INPUT_FOLDER_ID"
-            echo "voice_folder_id=$INPUT_FOLDER_ID" >> "$GITHUB_OUTPUT"
-          else
-            echo "Dynamically resolving voice folder ID for Row #${ROW_ID}..."
-            RESOLVED_ID=$(python src/drive_resolver.py --row-id "${ROW_ID}" --get-voice-id)
-            echo "Resolved voice_folder_id: $RESOLVED_ID"
-            echo "voice_folder_id=$RESOLVED_ID" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Upload Audio to Google Drive (Voice Folder)
-        env:
-          RCLONE_CONFIG_GDRIVE_TYPE: drive
-          RCLONE_CONFIG_GDRIVE_SCOPE: drive
-          RCLONE_CONFIG_GDRIVE_TOKEN: ${{ secrets.RCLONE_GDRIVE_TOKEN }}
-        run: |
-          ROW_ID="${{ github.event.inputs.row_id || '2' }}"
-          VOICE_FOLDER_ID="${{ steps.resolve_folder.outputs.voice_folder_id }}"
-          if [ -z "$VOICE_FOLDER_ID" ]; then
-            echo "❌ ERROR: Failed to resolve voice folder ID for Row #${ROW_ID}"
-            exit 1
-          fi
-          LOCAL_DIR="artifacts/voice_row_${ROW_ID}"
-          echo "Uploading from ${LOCAL_DIR} to destination Google Drive folder: ${VOICE_FOLDER_ID}..."
-          rclone copy "${LOCAL_DIR}" gdrive: --drive-root-folder-id "${VOICE_FOLDER_ID}" --include "*.wav" --retries 3 --retries-sleep 3s -v
-
-      - name: Upload Section Artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: voice_row_${{ github.event.inputs.row_id || '2' }}_scene3
-          path: artifacts/voice_row_${{ github.event.inputs.row_id || '2' }}
-          retention-days: 7
+          echo "🎙️ Synthesizing OmniVoice section 'scene3' for Row #${ github.event.inputs.row_id }..."
+          python src/omni_tts.py --row-id "${ github.event.inputs.row_id }" --section "scene3"
