@@ -285,7 +285,7 @@ class OmniVoiceEngine:
         self.cache_dir = cache_dir or os.path.expanduser("~/.cache/omnivoice")
         self.k2fsa_dir = os.path.expanduser("~/.cache/k2-fsa")
         self.voice_samples_dir = os.path.join(self.cache_dir, "voice_samples")
-        self.pinned_sample_path = os.path.join(self.voice_samples_dir, "reference.wav")
+        self.pinned_sample_path = os.path.join(self.voice_samples_dir, "voice_preview_mark.mp3")
 
         os.makedirs(self.cache_dir, exist_ok=True)
         os.makedirs(self.k2fsa_dir, exist_ok=True)

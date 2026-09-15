@@ -35,6 +35,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests gspread google-auth soundfile numpy pypinyin transformers accelerate torch torchaudio omnivoice
 
+      - name: Enforce Voice Mark Audio Reference (Strict 0% Fallback)
+        run: |
+          echo "🔒 Locking Voice Mark sample into OmniVoice cache..."
+          mkdir -p ~/.cache/omnivoice/voice_samples
+          cp "assets/voice_preview_mark.mp3" ~/.cache/omnivoice/voice_samples/voice_preview_mark.mp3
+          cp "assets/reference.txt" ~/.cache/omnivoice/voice_samples/reference.txt
+          test -s ~/.cache/omnivoice/voice_samples/voice_preview_mark.mp3 || (echo "❌ Missing Voice Mark sample!" && exit 1)
+          echo "✅ Voice Mark sample locked: $(ls -lh ~/.cache/omnivoice/voice_samples/voice_preview_mark.mp3)"
+
       - name: Synthesize OmniVoice Section [scene3]
         env:
           GOOGLE_SA_JSON: ${{ secrets.GOOGLE_SA_JSON }}
