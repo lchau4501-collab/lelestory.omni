@@ -49,5 +49,5 @@ jobs:
           GOOGLE_SA_JSON: ${{ secrets.GOOGLE_SA_JSON }}
           USER_OAUTH_JSON: ${{ secrets.USER_OAUTH_JSON }}
         run: |
-          echo "🎙️ Synthesizing OmniVoice section 'scene4' for Row #${{ github.event.inputs.row_id }}..."
-          python src/omni_tts.py --row-id "${{ github.event.inputs.row_id }}" --section "scene4"
+          echo "🎙️ Synthesizing OmniVoice section 'scene7,scene8,scene9,scene10' for Row #${{ github.event.inputs.row_id }}..."
+          python src/omni_tts.py --row-id "${{ github.event.inputs.row_id }}" --section "scene7,scene8,scene9,scene10"

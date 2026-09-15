@@ -517,8 +517,7 @@ def main():
         "--section",
         type=str,
         required=True,
-        choices=["title", "scene1", "scene2", "scene3", "scene4", "scene5", "scene6", "scene7", "scene8", "scene9", "scene10", "vocab", "outro_loop", "all"],
-        help="Story section"
+        help="Story section (e.g. 'title', 'scene1', 'scene1,scene2', 'vocab', 'outro_loop', or 'all')"
     )
     parser.add_argument("--output-dir", type=str, default=None, help="Output directory")
     parser.add_argument("--tempo", type=float, default=1.0, help="Speech tempo scaling (default: 1.0)")
@@ -531,13 +530,12 @@ def main():
 
     if args.section == "all":
         sections = ["title", "scene1", "scene2", "scene3", "scene4", "scene5", "scene6", "scene7", "scene8", "scene9", "scene10", "vocab", "outro_loop"]
-        for sec in sections:
-            result = engine.synthesize_section(sec, output_dir=out_dir, row_id=args.row_id, tempo=args.tempo)
-            print(f"Synthesized {sec}: {result}")
-            all_results.append(result)
     else:
-        result = engine.synthesize_section(args.section, output_dir=out_dir, row_id=args.row_id, tempo=args.tempo)
-        print(f"Synthesized {args.section}: {result}")
+        sections = [s.strip() for s in args.section.split(",") if s.strip()]
+
+    for sec in sections:
+        result = engine.synthesize_section(sec, output_dir=out_dir, row_id=args.row_id, tempo=args.tempo)
+        print(f"Synthesized {sec}: {result}")
         all_results.append(result)
 
     # Automatically upload generated WAV files and manifests to Google Drive
