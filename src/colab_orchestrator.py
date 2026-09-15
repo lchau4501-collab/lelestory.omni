@@ -176,10 +176,7 @@ def build_job_manifest(
     script_items: Dict[str, str] = {"title": title}
     for s in scenes:
         script_items[f"scene{s['scene_num']}"] = s["zh"]
-    for v in vocab:
-        script_items[f"vocab_{v['index']}"] = v["word"]
-    if include_vocab_recap:
-        script_items["vocab"] = " ".join(v["word"] for v in vocab)
+    # Zero Vocab Audio Policy: No audio for individual vocab words; only outro_loop
     script_items["outro_loop"] = outro["zh"]
 
     return {

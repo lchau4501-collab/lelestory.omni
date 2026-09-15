@@ -187,48 +187,30 @@ if manifest:
             s_num = s.get("scene_num")
             s_zh = s.get("zh", "").strip()
             if s_num is not None and s_zh:
-                script_items[f"scene{s_num}"] = s_zh
-
-        vocab_words = []
-        for v in manifest.get("vocabulary", []):
-            idx = v.get("index")
-            w = v.get("word", "").strip()
-            if idx is not None and w:
-                script_items[f"vocab_{idx}"] = w
-                vocab_words.append(w)
-
-        if vocab_words:
-            script_items["vocab"] = " ".join(vocab_words)
-
+        # Zero Vocab Audio Policy: Slide 11 is silent visual progression, no audio for individual vocab words
         outro_text = manifest.get("outro", {}).get("zh", "这些生词来自故事……")
         if outro_text:
             script_items["outro_loop"] = outro_text
 
-# Default Fallback: Standard 10-Scene Narrative Arc for Row #2 (18 sections total)
+# Default Fallback: Standard 10-Scene Narrative Arc for Row #2 (12 sections total: title, scene1..10, outro_loop)
 if not script_items:
     row_id = args.row_id if args.row_id is not None else 2
     target_speed = args.speed
     script_items = {
         "title": "吃菜的大狼",
-        "scene1": "深山里住着一只大灰狼，名叫罗罗。",
-        "scene2": "罗罗虽然长得高大威猛，但他有一颗特别温柔的心。",
-        "scene3": "森林里的小动物们都很怕他，一见到他就吓得四处逃跑。",
-        "scene4": "小兔子皮皮不小心摔倒在地上，害怕得闭上了眼睛。",
-        "scene5": "罗罗轻轻扶起皮皮，递给他一根新鲜的甜胡萝卜。",
-        "scene6": "罗罗微笑着说：“别害怕，我不吃肉，我只喜欢吃蔬菜！”",
-        "scene7": "小动物们惊讶地围了过来，发现大灰狼真的在吃青菜和蘑菇。",
-        "scene8": "大家放心地笑了，决定一起帮助罗罗建立一个美丽的蔬菜庄园。",
-        "scene9": "森林里到处洋溢着欢声笑语，罗罗和伙伴们围着一起开心地吃蔬菜火锅。",
-        "scene10": "友谊和善良化解了一切偏见，爱让大家紧紧依偎在一起。",
-        "vocab_1": "大灰狼",
-        "vocab_2": "蔬菜",
-        "vocab_3": "胡萝卜",
-        "vocab_4": "白菜",
-        "vocab_5": "火锅",
-        "vocab": "大灰狼 蔬菜 胡萝卜 白菜 火锅",
+        "scene1": "在美丽茂密的大森林里，住着一只名叫罗罗的大灰狼。不同于普通的狼，他性情温和，最喜欢在菜园里种植新鲜蔬菜。",
+        "scene2": "森林里的小兔子和小松鼠依然对大灰狼充满恐惧。每次远远看到罗罗走来，大家都吓得赶紧躲进灌木丛中不敢出声。",
+        "scene3": "这天下午，天空突然乌云密布，一场狂暴的风雨呼啸而来，猛烈的狂风将山坡上的一棵巨大松树连根吹倒。",
+        "scene4": "小兔子惊慌失措地呼喊：救命啊！倒下的大树把我们兔洞的出口死死挡住了，我们出不去了！",
+        "scene5": "罗罗在风雨中听到了急切的呼救声。他没有躲回温暖的木屋，而是顶着狂风暴雨立刻奔向了兔洞。",
+        "scene6": "罗罗大声说：小兔子别怕！我力气大，我来帮你们把这根沉重的大树干搬开！",
+        "scene7": "浸透雨水的树干沉重无比，罗罗脚底打滑，爪子磨破了也绝不松手，咬紧牙关使出了全身的力气。",
+        "scene8": "伴随着一声大喝，罗罗终于将巨木推到一旁，小心翼翼地把受惊的小兔子们一个个安全抱了出来。",
+        "scene9": "兔妈妈感激地说：罗罗，太感谢你了！原来你是一只真正善良温和的大狼，我们再也不怕你了！",
+        "scene10": "风雨过后彩虹高挂，小动物们齐聚在罗罗家，开开心心地吃起热气腾腾的蔬菜火锅。善良化解了误会，带来了珍贵的友谊。",
         "outro_loop": "这些生词来自故事……",
     }
-    print("ℹ️ Using default 10-Scene Chinese educational script (18 sections).", flush=True)
+    print("ℹ️ Using standard 10-Scene Chinese educational script (12 sections, zero vocab audio).", flush=True)
 
 OUTPUT_DIR = Path(f"/content/voice_row_{row_id}")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
