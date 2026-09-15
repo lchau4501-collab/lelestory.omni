@@ -404,11 +404,13 @@ class ColabVoiceOrchestrator:
         force_gpu: bool = True
     ) -> bool:
         logger.info(f"=== Starting Colab Voice Pipeline for Story Row #{row_id} (force_gpu={force_gpu}) ===")
-        ref_wav = ASSETS_DIR / "reference.wav"
+        ref_voice = ASSETS_DIR / "voice_preview_mark.mp3"
+        if not ref_voice.exists():
+            ref_voice = ASSETS_DIR / "voice_preview_mark - cartoonish, funny and cheerful.mp3"
         ref_txt = ASSETS_DIR / "reference.txt"
 
-        if not ref_wav.exists():
-            raise FileNotFoundError(f"Missing reference voice at {ref_wav}")
+        if not ref_voice.exists():
+            raise FileNotFoundError(f"Missing Voice Mark reference audio at {ref_voice}")
 
         rotation_attempt = 0
         success = False
@@ -432,7 +434,7 @@ class ColabVoiceOrchestrator:
                 success = self._execute_colab_synthesis(
                     account_alias=active_alias,
                     row_id=row_id,
-                    ref_wav_path=ref_wav,
+                    ref_wav_path=ref_voice,
                     ref_txt_path=ref_txt,
                     speed=speed,
                     target_sections=target_sections,
@@ -568,9 +570,9 @@ class ColabVoiceOrchestrator:
             self.mgr.run_colab_command(account_alias, ["upload", "-s", session_name, str(manifest_file), "job_manifest.json"], timeout=45)
 
             # 3. Upload Reference audio and text to VM
-            logger.info(f"[{account_alias}] Uploading reference voice and transcript to Colab VM...")
-            self.mgr.run_colab_command(account_alias, ["upload", "-s", session_name, str(ref_wav_path), "content/reference.wav"], timeout=45)
-            self.mgr.run_colab_command(account_alias, ["upload", "-s", session_name, str(ref_wav_path), "reference.wav"], timeout=45)
+            logger.info(f"[{account_alias}] Uploading Voice Mark reference voice and transcript to Colab VM...")
+            self.mgr.run_colab_command(account_alias, ["upload", "-s", session_name, str(ref_wav_path), "content/voice_preview_mark.mp3"], timeout=45)
+            self.mgr.run_colab_command(account_alias, ["upload", "-s", session_name, str(ref_wav_path), "voice_preview_mark.mp3"], timeout=45)
 
             if ref_txt_path.exists():
                 self.mgr.run_colab_command(account_alias, ["upload", "-s", session_name, str(ref_txt_path), "content/reference.txt"], timeout=45)

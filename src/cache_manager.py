@@ -144,17 +144,14 @@ class ModelCacheManager:
         # 2. Check candidate local authentic sources
         repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         candidate_sources = [
-            os.path.join(repo_root, "assets", "reference.wav"),
-            "assets/reference.wav",
-            os.path.join(repo_root, "assets", "ManVoice.mp3"),
+            os.path.join(repo_root, "assets", "voice_preview_mark.mp3"),
+            os.path.join(repo_root, "assets", "voice_preview_mark - cartoonish, funny and cheerful.mp3"),
+            "assets/voice_preview_mark.mp3",
             "assets/voice_preview_mark - cartoonish, funny and cheerful.mp3",
-            "assets/ManVoice.mp3",
-            os.path.join(self.voice_samples_dir, "ManVoice.mp3"),
+            os.path.join(self.voice_samples_dir, "voice_preview_mark.mp3"),
             os.path.join(self.omnivoice_dir, REFERENCE_SAMPLE_FILENAME),
-            os.path.expanduser(f"~/.cache/omnivoice/voice_samples/reference.wav"),
+            os.path.expanduser("~/.cache/omnivoice/voice_samples/voice_preview_mark.mp3"),
             os.path.expanduser(f"~/.cache/omnivoice/{REFERENCE_SAMPLE_FILENAME}"),
-            "/tmp/ManVoice.mp3",
-            "/tmp/ManVoice.mp3",
         ]
 
         for cand in candidate_sources:
@@ -207,9 +204,9 @@ class ModelCacheManager:
                 return dest_path
 
         # 4. Fallback to repo asset if available
-        repo_asset = os.path.join(repo_root, "assets", "reference.wav")
-        if os.path.isfile(repo_asset) and self._is_valid_pcm_wav(repo_asset):
-            shutil.copyfile(repo_asset, dest_path)
+        repo_asset = os.path.join(repo_root, "assets", "voice_preview_mark.mp3")
+        if os.path.isfile(repo_asset):
+            self._resample_to_24k_mono(repo_asset, dest_path, max_duration=9.98)
             with open(txt_path, "w", encoding="utf-8") as f:
                 f.write(REFERENCE_TRANSCRIPT)
             return dest_path

@@ -68,15 +68,14 @@ model = OmniVoice.from_pretrained(
 model_load_time = time.time() - t_model_start
 print(f"✓ OmniVoice model successfully loaded in {model_load_time:.2f}s.", flush=True)
 
-# 4. Resilient Reference Voice Audio & Transcript Lookup
+# 4. Canonical Voice Mark Audio & Transcript Lookup (Strict 0% Fallback)
 ref_candidates = [
-    Path("/content/reference.wav"),
-    Path("reference.wav"),
-    Path("/reference.wav"),
-    Path("/root/reference.wav"),
-    Path("/content/drive/MyDrive/reference.wav"),
+    Path("/content/voice_preview_mark.mp3"),
+    Path("voice_preview_mark.mp3"),
     Path("/content/voice_preview_mark - cartoonish, funny and cheerful.mp3"),
-    Path("voice_preview_mark - cartoonish, funny and cheerful.mp3")
+    Path("voice_preview_mark - cartoonish, funny and cheerful.mp3"),
+    Path("/root/voice_preview_mark.mp3"),
+    Path("/content/drive/MyDrive/voice_preview_mark.mp3"),
 ]
 REF_WAV = None
 for c in ref_candidates:
@@ -85,7 +84,7 @@ for c in ref_candidates:
         break
 
 if not REF_WAV:
-    matches = glob.glob("/**/reference.wav", recursive=True) + glob.glob("/**/voice_preview_mark*", recursive=True)
+    matches = glob.glob("/**/voice_preview_mark*", recursive=True)
     for m in matches:
         p = Path(m)
         if p.exists() and p.stat().st_size > 0:
@@ -93,7 +92,7 @@ if not REF_WAV:
             break
 
 if not REF_WAV or not REF_WAV.exists():
-    raise FileNotFoundError(f"Reference voice audio not found. Searched {ref_candidates} and filesystem.")
+    raise FileNotFoundError(f"Voice Mark reference audio not found. Searched {ref_candidates} and filesystem.")
 
 # Convert MP3 to standard 24kHz mono PCM WAV if needed
 if str(REF_WAV).lower().endswith(".mp3"):
