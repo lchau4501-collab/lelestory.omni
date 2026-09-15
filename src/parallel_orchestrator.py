@@ -65,6 +65,19 @@ class ParallelOrchestrator:
     def _get_token(self) -> Optional[str]:
         if self.token:
             return self.token
+        pat_env_path = os.path.expanduser("~/.cloud-profiles/lelehoctiengtrung/github/github_pat.env")
+        if os.path.isfile(pat_env_path):
+            try:
+                with open(pat_env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, v = line.split("=", 1)
+                            if k.strip() in ("GITHUB_TOKEN", "PIPELINE_PAT", "GH_TOKEN", "GITHUB_PAT"):
+                                self.token = v.strip()
+                                return self.token
+            except Exception as e:
+                logger.warning(f"Failed to read {pat_env_path}: {e}")
         try:
             res = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, timeout=5)
             if res.returncode == 0 and res.stdout.strip():
