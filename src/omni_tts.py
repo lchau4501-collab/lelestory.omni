@@ -28,9 +28,8 @@ SAMPLE_RATE = 24000
 CHANNELS = 1
 SAMPWIDTH = 2  # 16-bit PCM
 
-# Legacy GDrive ID eradicated per user policy
-REFERENCE_SAMPLE_ID = ""  # Legacy ID 1DpUPJQx-s41jJ25I0PE8HbfVW_DPXHEX superseded by reference.wav
-REFERENCE_SAMPLE_FILENAME = "reference.wav"
+# Canonical Voice Mark reference audio filename
+REFERENCE_SAMPLE_FILENAME = "voice_preview_mark.mp3"
 
 OUTRO_LOOP_TEXT_EXACT = "这些生词来自故事……"
 
@@ -141,13 +140,12 @@ def _synthesize_neural_omnivoice(
         ref_path = reference_wav_path
         if not ref_path or not os.path.isfile(ref_path):
             candidates = [
-                os.path.expanduser("~/.cache/omnivoice/voice_samples/reference.wav"),
-                os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "reference.wav"),
-                "assets/reference.wav",
-                os.path.expanduser("~/.cache/omnivoice/ManVoice.mp3"),
-                os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "ManVoice.mp3"),
+                os.path.expanduser("~/.cache/omnivoice/voice_samples/voice_preview_mark.mp3"),
+                os.path.expanduser("~/.cache/omnivoice/voice_samples/voice_preview_mark - cartoonish, funny and cheerful.mp3"),
+                os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "voice_preview_mark.mp3"),
+                os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "voice_preview_mark - cartoonish, funny and cheerful.mp3"),
+                "assets/voice_preview_mark.mp3",
                 "assets/voice_preview_mark - cartoonish, funny and cheerful.mp3",
-                "assets/ManVoice.mp3",
             ]
             for c in candidates:
                 if os.path.isfile(c):
@@ -156,7 +154,7 @@ def _synthesize_neural_omnivoice(
 
         if not ref_path or not os.path.isfile(ref_path):
             raise RuntimeError(
-                "Reference voice sample missing. Synthetic fallbacks are strictly prohibited."
+                "Voice Mark reference sample missing. Synthetic fallbacks are strictly prohibited."
             )
 
         ref_txt_candidates = [
