@@ -117,8 +117,6 @@ class ParallelOrchestrator:
                     "row_id": str(row_id)
                 }
             }
-            if voice_folder_id:
-                payload["inputs"]["voice_folder_id"] = str(voice_folder_id)
 
             try:
                 resp = requests.post(url, headers=headers, json=payload, timeout=15)
