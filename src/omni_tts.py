@@ -383,7 +383,7 @@ class OmniVoiceEngine:
         text: Optional[str] = None,
         output_dir: Optional[str] = None,
         row_id: int = 2,
-        tempo: float = 1.0
+        tempo: float = 0.70
     ) -> Dict[str, Any]:
         """
         Synthesizes audio for a story section at 1.0x tempo (pitch-preserved).
@@ -520,7 +520,7 @@ def main():
         help="Story section (e.g. 'title', 'scene1', 'scene1,scene2', 'vocab', 'outro_loop', or 'all')"
     )
     parser.add_argument("--output-dir", type=str, default=None, help="Output directory")
-    parser.add_argument("--tempo", type=float, default=1.0, help="Speech tempo scaling (default: 1.0)")
+    parser.add_argument("--tempo", type=float, default=0.70, help="Speech tempo scaling (default: 0.70)")
     parser.add_argument("--upload", action="store_true", default=True, help="Upload generated audio directly to Google Drive")
     args = parser.parse_args()
 

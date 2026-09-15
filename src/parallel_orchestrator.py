@@ -19,14 +19,13 @@ logger = logging.getLogger("lelestory.omni.parallel")
 DEFAULT_REPO = os.environ.get("GITHUB_REPOSITORY", "lchau4501-collab/lelestory.omni")
 DEFAULT_REF = "main"
 
-# Mapping of section name to workflow file
+# Mapping of section name to workflow file (6 Parallel Sub-Workflows, Zero Vocab Audio)
 SUB_WORKFLOWS = {
     "title": "wfl1_gen_title.yml",
     "scene1": "wfl2_gen_scene1.yml",
     "scene2": "wfl3_gen_scene2.yml",
     "scene3": "wfl4_gen_scene3.yml",
     "scene4": "wfl5_gen_scene4.yml",
-    "vocab": "wfl6_gen_vocab.yml",
     "outro_loop": "wfl7_gen_outro_loop.yml",
 }
 

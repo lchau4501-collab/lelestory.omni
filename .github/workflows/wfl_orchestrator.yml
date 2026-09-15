@@ -1,4 +1,4 @@
-name: OmniVoice TTS - Orchestrator (7 Parallel Sub-Workflows)
+name: OmniVoice TTS - Orchestrator (6 Parallel Sub-Workflows, Tempo 0.70x, Zero Vocab Audio)
 
 on:
   workflow_dispatch:

@@ -50,4 +50,4 @@ jobs:
           USER_OAUTH_JSON: ${{ secrets.USER_OAUTH_JSON }}
         run: |
           echo "🎙️ Synthesizing OmniVoice section 'title' for Row #${{ github.event.inputs.row_id }}..."
-          python src/omni_tts.py --row-id "${{ github.event.inputs.row_id }}" --section "title"
+          python src/omni_tts.py --row-id "${{ github.event.inputs.row_id }}" --section "title" --tempo 0.70
