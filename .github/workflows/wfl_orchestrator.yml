@@ -32,7 +32,7 @@ jobs:
 
       - name: Launch 7 Parallel Story Sub-Workflows
         env:
-          GITHUB_TOKEN: ${ secrets.PIPELINE_PAT }
+          GITHUB_TOKEN: ${{ secrets.PIPELINE_PAT }}
         run: |
-          echo "🚀 Triggering 7 Parallel OmniVoice Sub-Workflows for Row #${ github.event.inputs.row_id }..."
-          python src/parallel_orchestrator.py --row-id "${ github.event.inputs.row_id }"
+          echo "🚀 Triggering 7 Parallel OmniVoice Sub-Workflows for Row #${{ github.event.inputs.row_id }}..."
+          python src/parallel_orchestrator.py --row-id "${{ github.event.inputs.row_id }}"

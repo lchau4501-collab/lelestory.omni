@@ -22,8 +22,8 @@ jobs:
 
       - name: Audit 7 Voice Files in GFolder 'voice'
         env:
-          GOOGLE_SA_JSON: ${ secrets.GOOGLE_SA_JSON }
-          GITHUB_TOKEN: ${ secrets.PIPELINE_PAT }
+          GOOGLE_SA_JSON: ${{ secrets.GOOGLE_SA_JSON }}
+          GITHUB_TOKEN: ${{ secrets.PIPELINE_PAT }}
         run: |
-          echo "🛡️ Gatekeeper 3 Auditing 7 Audio Files for Row #${ github.event.inputs.row_id }..."
-          python src/gatekeeper3.py --row-id "${ github.event.inputs.row_id }"
+          echo "🛡️ Gatekeeper 3 Auditing 7 Audio Files for Row #${{ github.event.inputs.row_id }}..."
+          python src/gatekeeper3.py --row-id "${{ github.event.inputs.row_id }}"
