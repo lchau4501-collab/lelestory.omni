@@ -60,14 +60,7 @@ def get_service_account_credentials():
     if env_user_oauth and env_user_oauth.strip():
         try:
             info = json.loads(env_user_oauth)
-            return UserCredentials(
-                token=None,
-                refresh_token=info.get("refresh_token"),
-                client_id=info.get("client_id"),
-                client_secret=info.get("client_secret"),
-                token_uri=info.get("token_uri", "https://oauth2.googleapis.com/token"),
-                scopes=SCOPES
-            )
+            return UserCredentials.from_authorized_user_info(info)
         except Exception as e:
             logger.warning(f"Failed to parse USER_OAUTH_JSON: {e}")
 
@@ -76,14 +69,7 @@ def get_service_account_credentials():
         try:
             with open(local_oauth_path, "r", encoding="utf-8") as f:
                 info = json.load(f)
-            return UserCredentials(
-                token=None,
-                refresh_token=info.get("refresh_token"),
-                client_id=info.get("client_id"),
-                client_secret=info.get("client_secret"),
-                token_uri=info.get("token_uri", "https://oauth2.googleapis.com/token"),
-                scopes=SCOPES
-            )
+            return UserCredentials.from_authorized_user_info(info)
         except Exception as e:
             logger.warning(f"Failed to load local user OAuth: {e}")
 
