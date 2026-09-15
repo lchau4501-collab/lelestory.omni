@@ -39,6 +39,11 @@ jobs:
           test -s ~/.cache/omnivoice/voice_samples/voice_preview_mark.mp3 || (echo "❌ Missing Voice Mark sample!" && exit 1)
           echo "✅ Voice Mark sample locked: $(ls -lh ~/.cache/omnivoice/voice_samples/voice_preview_mark.mp3)"
 
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
       - name: Launch 7 Parallel Story Sub-Workflows
         env:
           GITHUB_TOKEN: ${{ secrets.PIPELINE_PAT }}
