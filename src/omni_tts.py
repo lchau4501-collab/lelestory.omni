@@ -522,19 +522,45 @@ def main():
     )
     parser.add_argument("--output-dir", type=str, default=None, help="Output directory")
     parser.add_argument("--tempo", type=float, default=1.0, help="Speech tempo scaling (default: 1.0)")
+    parser.add_argument("--upload", action="store_true", default=True, help="Upload generated audio directly to Google Drive")
     args = parser.parse_args()
 
     engine = OmniVoiceEngine()
     out_dir = args.output_dir or f"artifacts/voice_row_{args.row_id}"
+    all_results = []
 
     if args.section == "all":
         sections = ["title", "scene1", "scene2", "scene3", "scene4", "scene5", "scene6", "scene7", "scene8", "scene9", "scene10", "vocab", "outro_loop"]
         for sec in sections:
             result = engine.synthesize_section(sec, output_dir=out_dir, row_id=args.row_id, tempo=args.tempo)
             print(f"Synthesized {sec}: {result}")
+            all_results.append(result)
     else:
         result = engine.synthesize_section(args.section, output_dir=out_dir, row_id=args.row_id, tempo=args.tempo)
         print(f"Synthesized {args.section}: {result}")
+        all_results.append(result)
+
+    # Automatically upload generated WAV files and manifests to Google Drive
+    if args.upload:
+        try:
+            from drive_resolver import resolve_voice_folder, upload_file_to_drive, get_service_account_credentials
+            creds = get_service_account_credentials()
+            if creds:
+                voice_fid, voice_url = resolve_voice_folder(args.row_id)
+                if voice_fid:
+                    uploaded_count = 0
+                    for res in all_results:
+                        target_files = list(res.get("files", []))
+                        if res.get("manifest"):
+                            target_files.append(res["manifest"])
+                        for fp in target_files:
+                            if os.path.isfile(fp):
+                                fid = upload_file_to_drive(fp, voice_fid, creds=creds)
+                                if fid:
+                                    uploaded_count += 1
+                    logger.info(f"✅ Uploaded {uploaded_count} audio & manifest files to Drive voice folder: {voice_url}")
+        except Exception as exc:
+            logger.warning(f"Google Drive auto-upload skipped: {exc}")
 
 
 if __name__ == "__main__":

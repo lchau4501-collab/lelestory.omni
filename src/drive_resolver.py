@@ -199,6 +199,50 @@ def resolve_images_folder(
     return img_id, img_url
 
 
+def upload_file_to_drive(file_path: str, parent_folder_id: str, creds=None) -> Optional[str]:
+    """
+    Uploads a local file to Google Drive under parent_folder_id using Drive API v3.
+    Replaces existing file if present with same name.
+    """
+    if not os.path.isfile(file_path):
+        return None
+    creds = creds or get_service_account_credentials()
+    if not creds:
+        logger.warning(f"Cannot upload {file_path}: No Google credentials available.")
+        return None
+
+    try:
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaFileUpload
+        service = build("drive", "v3", credentials=creds)
+
+        file_name = os.path.basename(file_path)
+        q = f"'{parent_folder_id}' in parents and name = '{file_name}' and trashed = false"
+        res = service.files().list(q=q, fields="files(id, name)").execute()
+        existing = res.get("files", [])
+
+        mime_type = "audio/wav" if file_path.endswith(".wav") else ("application/json" if file_path.endswith(".json") else "application/octet-stream")
+        media = MediaFileUpload(file_path, mimetype=mime_type, resumable=True)
+
+        if existing:
+            file_id = existing[0]["id"]
+            updated = service.files().update(fileId=file_id, media_body=media).execute()
+            logger.info(f"✅ Updated {file_name} in Drive folder {parent_folder_id} (ID: {file_id})")
+            return updated.get("id")
+        else:
+            file_metadata = {
+                "name": file_name,
+                "parents": [parent_folder_id]
+            }
+            created = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
+            file_id = created.get("id")
+            logger.info(f"✅ Uploaded {file_name} to Drive folder {parent_folder_id} (ID: {file_id})")
+            return file_id
+    except Exception as e:
+        logger.error(f"❌ Failed to upload {file_path} to Drive: {e}")
+        return None
+
+
 def main():
     parser = argparse.ArgumentParser(description="Dynamic Google Drive Folder Resolver")
     parser.add_argument("--row-id", type=int, required=True, help="Target Sheet Row Number (# ID)")
