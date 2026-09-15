@@ -49,19 +49,56 @@ def extract_drive_folder_id(url_or_id: Optional[str]) -> Optional[str]:
 
 
 def get_service_account_credentials():
-    """Obtains Credentials from env JSON or local paths."""
-    from google.oauth2.service_account import Credentials
+    """
+    Obtains Credentials from User OAuth (preferred for storage quota) or Service Account.
+    """
+    from google.oauth2.credentials import Credentials as UserCredentials
+    from google.oauth2.service_account import Credentials as SACredentials
+
+    # 1. Prefer User OAuth credentials (has full user Drive storage quota)
+    env_user_oauth = os.environ.get("USER_OAUTH_JSON")
+    if env_user_oauth and env_user_oauth.strip():
+        try:
+            info = json.loads(env_user_oauth)
+            return UserCredentials(
+                token=None,
+                refresh_token=info.get("refresh_token"),
+                client_id=info.get("client_id"),
+                client_secret=info.get("client_secret"),
+                token_uri=info.get("token_uri", "https://oauth2.googleapis.com/token"),
+                scopes=SCOPES
+            )
+        except Exception as e:
+            logger.warning(f"Failed to parse USER_OAUTH_JSON: {e}")
+
+    local_oauth_path = os.path.expanduser("~/.cloud-profiles/lelehoctiengtrung/google_oauth/user_oauth2.json")
+    if os.path.exists(local_oauth_path):
+        try:
+            with open(local_oauth_path, "r", encoding="utf-8") as f:
+                info = json.load(f)
+            return UserCredentials(
+                token=None,
+                refresh_token=info.get("refresh_token"),
+                client_id=info.get("client_id"),
+                client_secret=info.get("client_secret"),
+                token_uri=info.get("token_uri", "https://oauth2.googleapis.com/token"),
+                scopes=SCOPES
+            )
+        except Exception as e:
+            logger.warning(f"Failed to load local user OAuth: {e}")
+
+    # 2. Service Account credentials fallback
     env_sa = os.environ.get("GCP_SERVICE_ACCOUNT_JSON") or os.environ.get("GOOGLE_SA_JSON")
     if env_sa:
         try:
             info = json.loads(env_sa)
-            return Credentials.from_service_account_info(info, scopes=SCOPES)
+            return SACredentials.from_service_account_info(info, scopes=SCOPES)
         except Exception as e:
             logger.warning(f"Failed to parse SA from env: {e}")
     for p in SA_PATHS:
         if os.path.exists(p):
             try:
-                return Credentials.from_service_account_file(p, scopes=SCOPES)
+                return SACredentials.from_service_account_file(p, scopes=SCOPES)
             except Exception:
                 pass
     return None
