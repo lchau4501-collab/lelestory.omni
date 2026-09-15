@@ -187,6 +187,8 @@ if manifest:
             s_num = s.get("scene_num")
             s_zh = s.get("zh", "").strip()
             if s_num is not None and s_zh:
+                script_items[f"scene{s_num}"] = s_zh
+
         # Zero Vocab Audio Policy: Slide 11 is silent visual progression, no audio for individual vocab words
         outro_text = manifest.get("outro", {}).get("zh", "这些生词来自故事……")
         if outro_text:
